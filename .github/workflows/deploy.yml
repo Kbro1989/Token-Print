@@ -24,9 +24,9 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -34,7 +34,16 @@ jobs:
 
       - run: npm ci
 
+      - name: Fetch GitHub Contributors JSON
+        run: |
+          curl -s https://api.github.com/repos/${{ github.repository }}/contributors?per_page=100 > public/contributors.json || echo "[]" > public/contributors.json
+
+      # Serve at the domain root (tokenprint.in) instead of /Token-Print.
+      # NEXT_DISABLE_BASEPATH opts out of the basePath derived from
+      # GITHUB_REPOSITORY (which GitHub pre-sets as a read-only override).
       - run: npm run build
+        env:
+          NEXT_DISABLE_BASEPATH: "1"
 
       - name: Skip deploy when Pages is disabled
         if: ${{ github.event.repository.has_pages != true }}
@@ -42,18 +51,18 @@ jobs:
 
       # enablement:true turns Pages on (build_type=workflow) the first time this
       # runs, so a fresh clone/fork deploys without a manual Settings → Pages step.
-      - uses: actions/configure-pages@v4
+      - uses: actions/configure-pages@v6
         if: ${{ github.event.repository.has_pages == true }}
         with:
           enablement: true
 
       - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         if: ${{ github.event.repository.has_pages == true }}
         with:
           path: frontend/out
 
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
         if: ${{ github.event.repository.has_pages == true }}

@@ -1,4 +1,4 @@
-# NeuroScope backend dependencies.
+# TokenPrint backend dependencies.
 # torch / transformers / scikit-learn are pinned to the versions verified present
 # on this machine so behavior matches what was tested. The web stack is left
 # unpinned (latest is fine).
@@ -7,8 +7,11 @@ fastapi
 uvicorn[standard]
 websockets
 numpy
+python-multipart
+pyyaml
+httpx
 
 # ML stack (pinned to the locally-verified versions)
-torch==2.11.0
+torch==2.14.0
 transformers==4.51.3
-scikit-learn==1.5.1
+scikit-learn==1.9.1

@@ -1,9 +1,9 @@
 "use client";
 
-import { useMemo, useEffect, useState } from "react";
+import { useMemo, useEffect, useState, useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import { Billboard, Text, Line } from "@react-three/drei";
-import { Color, Vector3, QuadraticBezierCurve3, CatmullRomCurve3 } from "three";
+import { Color, Group, Vector3, QuadraticBezierCurve3 } from "three";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 
 import { useStore } from "@/lib/store";
@@ -12,24 +12,24 @@ import TransformerStack, { type StackDims } from "./TransformerStack";
 import KvCacheVolume from "./KvCacheVolume";
 import { opColorOf, opKindOf, type OpKind } from "@/lib/sceneColors";
 
-const GAP = 3.4;
+// Tighter slab spacing than the walkthrough keeps the generation workspace's
+// column denser and more readable at a glance while leaving the exact same
+// 3D components (they all key off `gap`).
+const GAP = 2.6;
 const KV_CAP = 40;
-
-const tmp = new Vector3();
 
 export default function GenerationScene() {
   const meta = useStore((s) => s.genMeta);
   const archMeta = useStore((s) => s.arch?.metadata);
   const opIndex = useStore((s) => s.opIndex);
   const setOpIndex = useStore((s) => s.setOpIndex);
-  const followMode = useStore((s) => s.followMode);
-  const view2D = useStore((s) => s.view2D);
+  const enterInspectMode = useStore((s) => s.enterInspectMode);
   const playIndex = useStore((s) => s.playIndex);
+  const frameCount = useStore((s) => s.genFrames.length);
   const frame = useStore((s) => (s.playIndex >= 0 ? s.genFrames[s.playIndex] : null));
   const [hoveredLayer, setHoveredLayer] = useState<number | null>(null);
   const [hoveredKind, setHoveredKind] = useState<OpKind | null>(null);
   const sourceSelectedTensor = useStore((s) => s.sourceSelectedTensor);
-  const setSourceSelectedTensor = useStore((s) => s.setSourceSelectedTensor);
 
   const nLayers = meta?.num_layers ?? 24;
   const catalog = meta?.op_catalog ?? [];
@@ -67,9 +67,7 @@ export default function GenerationScene() {
     return Math.max(0, Math.min(ls[idx] / max, 1));
   }, [frame, activeLayer]);
 
-  const { camera } = useThree();
   const controls = useThree((s) => s.controls) as OrbitControlsImpl | null;
-  const userOrbiting = useStore((s) => s.userOrbiting);
   const setUserOrbiting = useStore((s) => s.setUserOrbiting);
 
   // Always keep OrbitControls enabled so the user can rotate freely.
@@ -90,17 +88,37 @@ export default function GenerationScene() {
     };
   }, [controls, setUserOrbiting]);
 
+
+
   const opCol: [number, number, number] = op
     ? opColorOf(op.op_key, activeKind ?? "norm")
     : [0.5, 0.6, 0.8];
 
-  useFrame(() => {
-    if (followMode && !userOrbiting && activeLayer != null && controls) {
-      const y = -(activeLayer + 1) * GAP;
-      const dest = view2D ? tmp.set(0, y, 11) : tmp.set(7, y + 1.2, 9);
-      camera.position.lerp(dest, 0.07);
-      controls.target.lerp(tmp.set(0, y, 0), 0.12);
-      controls.update();
+  const stackH = (nLayers + 2) * GAP + 3;
+  const homeY = -stackH / 2;
+
+  // The generation workspace's token "packet" — a thin glowing tracer that
+  // travels from the top of the stack (input/embeddings) down through the
+  // active layer to the output as the real op catalog executes.
+  const packetRef = useRef<Group | null>(null);
+  const packetY = useRef(0);
+  const packetPulse = useRef(0);
+
+  useFrame((_, delta) => {
+    // Packet follows the active op's layer; a new forward pass restarts it at
+    // the top (input/embeddings) when the op cursor wraps or a layer begins.
+    if (packetRef.current) {
+      const tgtY =
+        frameCount === 0
+          ? -GAP
+          : activeLayer != null
+            ? -(activeLayer + 1) * GAP + 0.6
+            : -(nLayers + 1) * GAP;
+      packetY.current += (tgtY - packetY.current) * Math.min(delta * 2.4, 1);
+      packetRef.current.position.y = packetY.current;
+      packetPulse.current += delta * 3;
+      const s = 1 + 0.14 * Math.sin(packetPulse.current);
+      packetRef.current.scale.set(s, s, s);
     }
   });
 
@@ -117,11 +135,42 @@ export default function GenerationScene() {
       const opLayer = op.layer ?? (kind === "embedding" ? -1 : kind === "output" ? nLayers : null);
       return opLayer === layer && opKindOf(op.op_key) === kind;
     });
-    if (idx >= 0) setOpIndex(idx);
+    if (idx >= 0) {
+      setOpIndex(idx);
+      // Open the inspector for the clicked component
+      const clickedOp = catalog[idx];
+      if (clickedOp?.op_key) {
+        const l = clickedOp.layer ?? -1;
+        const kindStr = opKindOf(clickedOp.op_key);
+        // Build canonical op ID: matches TransformerOperationGraph naming
+        const opId = l < 0
+          ? (kindStr === "embedding" ? "op_embed" : kindStr === "output" ? "op_lm_head" : clickedOp.op_key)
+          : `op_l${l}_${clickedOp.op_key.replace(/^(norm|attn_|res_|mlp_|rope|swiglu|lm_head|embed)/, (m) => m)}`;
+        enterInspectMode(opId);
+      }
+    }
   };
 
   return (
     <group>
+      {/* Idle backdrop — a faint translucent volume behind the column so the
+          workspace reads as a structured window rather than an empty void.
+          Hidden during replay so close-up follow views stay clean. */}
+      {frameCount === 0 && (
+        <mesh position={[0, homeY, 0]}>
+          <boxGeometry args={[17, stackH + 3, 6]} />
+          <meshBasicMaterial color="#262a33" transparent opacity={0.38} depthWrite={false} />
+        </mesh>
+      )}
+
+      {/* Active-op emphasis band — follows the active layer down the column. */}
+      {activeLayer != null && (
+        <mesh position={[0, activeY, 0]}>
+          <boxGeometry args={[11, GAP, 3.2]} />
+          <meshBasicMaterial color={new Color(...opCol)} transparent opacity={0.22} depthWrite={false} />
+        </mesh>
+      )}
+
       <TransformerStack
         nLayers={nLayers}
         dims={dims}
@@ -163,6 +212,26 @@ export default function GenerationScene() {
         </Billboard>
       )}
 
+      {/* Token packet — the activation tracer travelling through the stack. */}
+      <group position={[2.2, 0, 0]}>
+        <group ref={packetRef}>
+          <mesh>
+            <sphereGeometry args={[0.16, 16, 16]} />
+            <meshBasicMaterial color="#7fd7c8" transparent opacity={0.9} />
+          </mesh>
+          <Line
+            points={[
+              new Vector3(0, -2.6, 0),
+              new Vector3(0, 0, 0),
+            ]}
+            color="#7fd7c8"
+            lineWidth={1}
+            transparent
+            opacity={0.28}
+          />
+        </group>
+      </group>
+
       {/* KV-cache as a spatial volume: per-layer grid of cached positions.
           Pre-fill = warm wide band; decode = dim stale + bright new cell. */}
       {phase && activeLayer != null && (
@@ -173,11 +242,18 @@ export default function GenerationScene() {
         />
       )}
 
-      {/* Attention arcs from active attention layer to tokens.
-          Only shown during decode when an attention op is active and real KV positions exist. */}
+      {/* Real Attention Arcs from active attention layer to tokens.
+          Only rendered when real attention data (store.data.attention) is available for this layer. */}
       {activeLayer != null && activeKind === "attn" && phase && positions > 0 && (
         <group>
           {(() => {
+            const realAttn = useStore.getState().data?.attention;
+            const layerAttn = realAttn && realAttn[activeLayer] ? realAttn[activeLayer] : null;
+
+            if (!layerAttn) {
+              return null;
+            }
+
             const nh = dims.numHeads;
             const kvh = dims.kvHeads;
             const kg = Math.max(1, Math.min(kvh, nh));
@@ -185,51 +261,53 @@ export default function GenerationScene() {
             const groupGap = 0.55;
             const groupSpan = (Math.PI * 2) / kg - groupGap;
             const Rc = 1.25;
+
             return Array.from({ length: Math.min(nh, 14) }, (_, h) => {
-            const g = Math.floor(h / pg);
-            const withinN = Math.min(pg, nh - g * pg);
-            const i = h - g * pg;
-            const gStart = g * ((Math.PI * 2) / kg) + groupGap / 2;
-            const a = withinN > 1 ? gStart + (i / (withinN - 1)) * groupSpan : gStart + groupSpan / 2;
-            const fromX = Rc * Math.sin(a);
-            const fromZ = Rc * Math.cos(a);
+              const headMatrix = layerAttn[h];
+              if (!headMatrix) return null;
 
-            // Show arcs to the most-attended positions (simulated typical pattern)
-            const attendedPositions = [];
-            const n = Math.min(positions, 16);
-            for (let p = 0; p < n; p++) {
-              const relP = p / Math.max(1, n - 1);
-              const weight = h === 0
-                ? (p === n - 1 ? 0.05 : Math.exp(-3 * relP) * 0.7 + 0.08 * (1 - relP))
-                : (p === 0 ? 0.6 : Math.exp(-2 * relP) * 0.15 + 0.05);
-              if (weight < 0.08) continue;
-              attendedPositions.push({ pos: p, weight });
-            }
+              const g = Math.floor(h / pg);
+              const withinN = Math.min(pg, nh - g * pg);
+              const i = h - g * pg;
+              const gStart = g * ((Math.PI * 2) / kg) + groupGap / 2;
+              const a = withinN > 1 ? gStart + (i / (withinN - 1)) * groupSpan : gStart + groupSpan / 2;
+              const fromX = Rc * Math.sin(a);
+              const fromZ = Rc * Math.cos(a);
 
-            const headColor = new Color().setHSL(h / dims.numHeads, 0.7, 0.55);
+              const lastRow = headMatrix[headMatrix.length - 1] ?? [];
+              const attendedPositions: { pos: number; weight: number }[] = [];
 
-            return attendedPositions.map(({ pos: p, weight }) => {
-              const toX = -6.4 + 0.24 * p + 0.5;
-              const toY = activeY;
-              const start = new Vector3(fromX, activeY, fromZ);
-              const end = new Vector3(toX, toY, 0);
-              const mid = start.clone().add(end).multiplyScalar(0.5);
-              mid.y += Math.abs(activeY - toY) * 0.2 + 1.2;
-              mid.z *= 0.3;
-              const curve = new QuadraticBezierCurve3(start, mid, end);
-              const pts = curve.getPoints(24);
-              const opacity = 0.15 + weight * 0.7;
-              return (
-                <Line
-                  key={`arc-${h}-${p}`}
-                  points={pts}
-                  color={headColor}
-                  lineWidth={1}
-                  transparent
-                  opacity={opacity}
-                />
-              );
-            });
+              for (let p = 0; p < Math.min(lastRow.length, positions, 16); p++) {
+                const weight = lastRow[p];
+                if (weight > 0.05) {
+                  attendedPositions.push({ pos: p, weight });
+                }
+              }
+
+              const headColor = new Color().setHSL(h / dims.numHeads, 0.7, 0.55);
+
+              return attendedPositions.map(({ pos: p, weight }) => {
+                const toX = -6.4 + 0.24 * p + 0.5;
+                const toY = activeY;
+                const start = new Vector3(fromX, activeY, fromZ);
+                const end = new Vector3(toX, toY, 0);
+                const mid = start.clone().add(end).multiplyScalar(0.5);
+                mid.y += Math.abs(activeY - toY) * 0.2 + 1.2;
+                mid.z *= 0.3;
+                const curve = new QuadraticBezierCurve3(start, mid, end);
+                const pts = curve.getPoints(24);
+                const opacity = Math.min(1, 0.2 + weight * 0.8);
+                return (
+                  <Line
+                    key={`arc-${h}-${p}`}
+                    points={pts}
+                    color={headColor}
+                    lineWidth={1.5}
+                    transparent
+                    opacity={opacity}
+                  />
+                );
+              });
             });
           })()}
         </group>
@@ -254,10 +332,10 @@ export default function GenerationScene() {
               }
               return pts;
             })()}
-            color="#6fa8dc"
+            color="#e5e5e5"
             lineWidth={1}
             transparent
-            opacity={0.5}
+            opacity={0.6}
           />
           {Array.from({ length: 4 }, (_, i) => {
             const t = (i / 4) * 2.5 * Math.PI * 2;
@@ -265,12 +343,12 @@ export default function GenerationScene() {
             return (
               <mesh key={i} position={[0.35 * Math.cos(t), y, 0.35 * Math.sin(t)]}>
                 <sphereGeometry args={[0.04, 6, 6]} />
-                <meshBasicMaterial color="#6fa8dc" transparent opacity={0.3 + i * 0.15} />
+                <meshBasicMaterial color="#ffffff" transparent opacity={0.3 + i * 0.15} />
               </mesh>
             );
           })}
           <Billboard position={[0.9, 0.9, 0]}>
-            <Text fontSize={0.28} anchorX="left" color="#6fa8dc" outlineWidth={0.01} outlineColor="#000000">
+            <Text fontSize={0.28} anchorX="left" color="#ffffff" outlineWidth={0.01} outlineColor="#000000">
               RoPE
             </Text>
           </Billboard>

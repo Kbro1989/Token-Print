@@ -1,0 +1,161 @@
+name: "🎨 Visual Regression — 3D scenes"
+
+# Runs on every PR so the required status check always reports, plus a manual
+# dispatch to regenerate the Linux baselines after deliberate UI changes.
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      update_snapshots:
+        description: "Regenerate and commit the Linux baselines"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  visual-regression:
+    name: Playwright visual regression
+    runs-on: ubuntu-latest
+    env:
+      HF_HOME: ${{ github.workspace }}/.cache/huggingface
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # ── Backend setup ──────────────────────────────────────────────────────
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Cache Qwen2.5-0.5B weights
+        uses: actions/cache@v6
+        with:
+          path: .cache/huggingface
+          key: hf-qwen2.5-0.5b-instruct-v1
+          restore-keys: |
+            hf-qwen2.5-0.5b-instruct-
+
+      - name: Install backend requirements
+        run: |
+          pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cpu
+          pip install fastapi uvicorn websockets numpy transformers==4.51.3 scikit-learn==1.5.1 python-multipart pyyaml
+
+      - name: Start backend
+        working-directory: backend
+        run: |
+          python -m uvicorn app.main:app --app-dir . --port 8000 &
+          # Wait for full backend readiness (up to 240 s for model load).
+          for i in $(seq 1 120); do
+            if curl -sf http://localhost:8000/architecture > /dev/null 2>&1; then
+              echo "backend ready"
+              sleep 5  # Extra wait for model initialization
+              break
+            fi
+            sleep 2
+          done
+          if [ $i -eq 121 ]; then echo "Backend failed to start"; exit 1; fi
+
+      # ── Frontend setup ────────────────────────────────────────────────────
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Build frontend
+        working-directory: frontend
+        env:
+          # GitHub pre-sets GITHUB_REPOSITORY (read-only) so the deploy build
+          # gets its /Token-Print basePath; the visual suite runs against a
+          # basePath-less export served at "/" so page.goto("/") just works.
+          NEXT_DISABLE_BASEPATH: "1"
+        run: npm run build
+
+      - name: Start frontend (static export server)
+        working-directory: frontend
+        run: |
+          python3 -m http.server 3000 --directory out &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:3000/ && echo "frontend ready" && break
+            sleep 2
+          done
+
+      # ── Run visual tests (optionally regenerating baselines) ───────────────
+      - name: Run Playwright visual tests
+        id: playwright
+        continue-on-error: true
+        working-directory: frontend
+        env:
+          UPDATE_SNAPSHOTS: ${{ inputs.update_snapshots }}
+        run: |
+          if [ "$UPDATE_SNAPSHOTS" = "true" ]; then
+            npx playwright test --update-snapshots
+          else
+            npx playwright test
+          fi
+
+      # ── Commit regenerated Linux baselines (manual dispatch only) ──────────
+      - name: Commit updated baselines
+        if: inputs.update_snapshots == true
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend/tests/visual/
+          if ! git diff --cached --quiet; then
+            git commit -m "ci: regenerate Linux visual regression baselines"
+            git push
+          fi
+
+      # ── Upload artifacts and comment on PR ────────────────────────────────
+      - name: Upload Playwright report and diffs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report-${{ github.run_id }}
+          path: |
+            frontend/playwright-report/
+            frontend/test-results/
+          retention-days: 14
+
+      - name: Post PR comment with report link
+        if: always()
+        continue-on-error: true
+        uses: actions/github-script@v9
+        with:
+          script: |
+            if ('${{ steps.playwright.conclusion }}' !== 'failure') return;
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = [
+              '## ⚠️ Visual regression tests failed',
+              '',
+              `The Playwright visual regression suite detected differences in the 3D scenes.`,
+              '',
+              `**[View the full Playwright report and diff images](${runUrl})**`,
+              '',
+              'If the change is intentional, regenerate the baselines and commit them:',
+              '```bash',
+              'gh workflow run "🎨 Visual Regression — 3D scenes" --ref <branch> ' +
+                '--field update_snapshots=true',
+              '```',
+            ].join('\n');
+            try {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            } catch (err) {
+              console.log('Skipping PR comment (fork PR read-only token):', err.message);
+            }

@@ -1,27 +1,24 @@
 // Scoped tensor dequantization: decode quantized bytes from a GGUF file into
-// Float32Array values.  Only dequantizes a single tensor on demand (bounded to
-// the selected tensor, never the whole file).  Runs synchronously for small
+// Float32Array values. Only dequantizes a single tensor on demand (bounded to
+// the selected tensor, never the whole file). Runs synchronously for small
 // tensors; wrap in a Web Worker for large ones.
+//
+// NOTE ON QUANTIZATION LIMITATIONS (DOC-05):
+// Dequantization routines in this file (specifically K-quants Q4_K, Q5_K, and Q8_K)
+// use simplified block scale reconstructions optimized for fast in-browser WebGL
+// visual exploration. Displayed values represent approximate reconstructions.
+// For exact full-precision numeric weights, use live backend execution (/architecture).
 
 import { GGML_TYPES, type GgmlType } from "./ggmlTypes";
 
 // ---- ggml quantization constants ----------------------------------------- //
 const QK4_0 = 32;
 const QK8_0 = 32;
-const QK_K = 256;
 
 // ---- helpers ------------------------------------------------------------- //
 
-function readI16LE(dv: DataView, off: number): number {
-  return dv.getInt16(off, true);
-}
-
 function readU16LE(dv: DataView, off: number): number {
   return dv.getUint16(off, true);
-}
-
-function readF32LE(dv: DataView, off: number): number {
-  return dv.getFloat32(off, true);
 }
 
 function readU8(dv: DataView, off: number): number {
@@ -32,7 +29,6 @@ function readU8(dv: DataView, off: number): number {
 
 /** Q4_0: 2-byte scale (f16) + 32 nibbles packed into 16 bytes. */
 function dequantBlockQ4_0(block: DataView, dst: Float32Array, dstOff: number) {
-  const d = readF32LE(block, 0); // actually f16 but we read as u16 and reinterpret
   // Q4_0 stores the scale as f16.  DataView can't read f16 natively; decode manually.
   const dRaw = readU16LE(block, 0);
   const dF = f16toF32(dRaw);

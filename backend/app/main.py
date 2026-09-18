@@ -1,4 +1,4 @@
-"""FastAPI application for NeuroScope.
+"""FastAPI application for TokenPrint.
 
 Endpoints:
   * GET  /health      — liveness + whether the model is loaded
@@ -17,35 +17,77 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import re
+import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import (
+    FastAPI,
+    File,
+    HTTPException,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
 from .ablation import Ablation
-from .debug import DebugCapture
+from .gguf_engine import GGUF_ENGINE_AVAILABLE, GGUFEngine
 from .model import ModelEngine, TokenizedTooLong
 from .reduce import chunk_attribution, query_self_attribution, ungrounded_flags
 from .schemas import (
     AblateRequest,
+    AnalyzeImageRequest,
     AnalyzeRequest,
     AnalyzeResponse,
     ModelInfo,
+    PatchRequest,
     RagAnalyzeRequest,
     RagAnalyzeResponse,
     RagChunk,
 )
-from .trace import TraceRecorder, serialize_trace, parse_trace
+from .trace import TraceRecorder, parse_trace, serialize_trace
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("neuroscope")
+logger = logging.getLogger("tokenprint")
 
 # Single process-wide engine handle, populated in the lifespan handler.
 engine: ModelEngine | None = None
 
 # Last recorded trace (kept in memory; overwritten each generation).
 _last_trace: dict | None = None
+
+# Directory that holds user GGUF files (issue #85). Generation district can
+# switch to real quantized inference against any .gguf found here.
+GGUF_DIR = Path(__file__).resolve().parent.parent / "data" / "gguf"
+GGUF_DIR.mkdir(parents=True, exist_ok=True)
+
+# Hard upload limit for GGUF files (ENG-09). 10 GB expressed in bytes.
+MAX_GGUF_BYTES = 10 * 1024 * 1024 * 1024
+
+# Cache of opened GGUF engines keyed by resolved path.
+_gguf_engines: dict[str, GGUFEngine] = {}
+
+
+def _resolve_gguf(path: str) -> str:
+    """Canonicalize a requested GGUF path, forbidding traversal outside GGUF_DIR."""
+    if not path or not isinstance(path, str):
+        raise HTTPException(status_code=400, detail="Invalid GGUF path.")
+    safe_name = os.path.basename(path)
+    valid_map = {p.name: p.resolve() for p in GGUF_DIR.iterdir() if p.is_file()}
+    if safe_name not in valid_map:
+        raise HTTPException(status_code=404, detail="GGUF file not found in data/gguf.")
+    return str(valid_map[safe_name])
+
+
+def _gguf_engine_for(path: str) -> GGUFEngine:
+    resolved = _resolve_gguf(path)
+    if resolved not in _gguf_engines:
+        _gguf_engines[resolved] = GGUFEngine(resolved)
+    return _gguf_engines[resolved]
 
 
 @asynccontextmanager
@@ -61,15 +103,32 @@ async def lifespan(app: FastAPI):
         engine.num_heads,
         engine.hidden_size,
     )
+    if GGUF_ENGINE_AVAILABLE:
+        logger.info("GGUF quantized generation: available (llama-cpp-python installed)")
+    else:
+        logger.info(
+            "GGUF quantized generation: GGUF metadata only "
+            "(llama-cpp-python not installed — "
+            "pip install -r requirements-gguf.txt for real quantized generation)"
+        )
     yield
     engine = None
 
 
-app = FastAPI(title="NeuroScope", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="TokenPrint", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=[
+        # Local dev
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        # Deployed frontend (GitHub Pages + custom domain)
+        "https://sudharsanselvaraj.github.io",
+        "https://tokenprint.in",
+        "https://www.tokenprint.in",
+        "https://api.tokenprint.in",
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -153,7 +212,13 @@ def _token_spans_from_char_ranges(
 
 @app.get("/health")
 async def health() -> dict:
-    return {"status": "ok", "model_loaded": engine is not None}
+    return {
+        "status": "ok",
+        "model_loaded": engine is not None,
+        "mode": engine.mode if engine is not None else None,
+        "model_type": engine.model_type if engine is not None else None,
+        "gguf_engine_available": GGUF_ENGINE_AVAILABLE,
+    }
 
 
 @app.get("/model-info", response_model=ModelInfo)
@@ -170,21 +235,340 @@ async def architecture(model_id: str | None = None) -> dict:
     the currently loaded model's metadata.
     """
     if model_id:
-        return _require_engine().checkpoint_architecture(model_id)
+        try:
+            return _require_engine().checkpoint_architecture(model_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Failed to fetch model architecture for '{model_id}': {exc}",
+            ) from exc
     return _require_engine().architecture()
+
+
+# --- GGUF quantized generation (issue #85) -------------------------------- //
+
+def _quant_guess(filename: str) -> str:
+    stem = Path(filename).stem.upper()
+    for token in ("Q8_0", "Q6_K", "Q5_K_M", "Q5_K_S", "Q5_0", "Q4_K_M", "Q4_K_S", "Q4_0", "Q3_K", "Q2_K", "F16", "F32"):
+        if token in stem:
+            return token
+    return "unknown"
+
+
+@app.get("/gguf/list")
+async def gguf_list() -> dict:
+    """List server-side .gguf files eligible for real quantized generation."""
+    items = []
+    for p in sorted(GGUF_DIR.glob("*.gguf")):
+        items.append(
+            {
+                "name": p.name,
+                "path": p.name,
+                "size_bytes": p.stat().st_size,
+                "quant": _quant_guess(p.name),
+                "loaded": str(p.resolve()) in _gguf_engines,
+            }
+        )
+    return {"files": items, "engine_available": GGUF_ENGINE_AVAILABLE}
+
+
+@app.post("/gguf/upload")
+async def gguf_upload(file: UploadFile = File(None)) -> dict:  # noqa: B008
+    """Stream an uploaded .gguf into data/gguf so it can power generation."""
+    if file is None or not (file.filename or "").lower().endswith(".gguf"):
+        raise HTTPException(status_code=400, detail="Only .gguf files are accepted.")
+    raw_name = file.filename or "model.gguf"
+    safe = os.path.basename(raw_name)
+    if not safe or safe != raw_name or ".." in safe or "/" in safe or "\\" in safe:
+        raise HTTPException(status_code=400, detail="Invalid filename.")
+    base_dir = GGUF_DIR.resolve()
+    dest = (base_dir / safe).resolve()
+    if not str(dest).startswith(str(base_dir) + os.sep):
+        raise HTTPException(status_code=400, detail="Invalid target path.")
+    size = 0
+    try:
+        with open(dest, "wb") as fh:  # noqa: ASYNC230
+            while chunk := await file.read(8 << 20):  # 8 MB chunks
+                size += len(chunk)
+                if size > MAX_GGUF_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=(
+                            f"Upload rejected: file exceeds the "
+                            f"{MAX_GGUF_BYTES // (1024 ** 3)} GB limit."
+                        ),
+                    )
+                fh.write(chunk)
+    except HTTPException:
+        dest.unlink(missing_ok=True)
+        raise
+    except Exception:
+        dest.unlink(missing_ok=True)
+        raise
+    return {"name": safe, "path": safe, "size_bytes": size, "quant": _quant_guess(safe)}
+
+
+@app.post("/gguf/open")
+async def gguf_open(payload: dict = ...) -> dict:
+    """Open (and cache) a server-side GGUF for generation; returns metadata."""
+    path = str(payload.get("path") or "")
+    if not path:
+        raise HTTPException(status_code=400, detail="`path` is required.")
+    resolved = _resolve_gguf(path)
+    if resolved not in _gguf_engines:
+        _gguf_engines[resolved] = GGUFEngine(resolved)
+    try:
+        meta = _gguf_engines[resolved].metadata()
+    except (RuntimeError, ModuleNotFoundError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, **meta}
+
+
+from app.inference.adapters import select_model_adapter
+from app.inference.capabilities import (
+    BackendCapabilities,
+    RuntimeCapabilities,
+    calculate_effective_capabilities,
+)
+from app.inference.registry import registry as backend_registry
+from app.schemas import HFInspectResponse, HFModelMeta, HFSearchResponse
+
+# Simple in-memory cache for HF API responses with timestamp
+_hf_search_cache: dict[str, tuple[float, HFSearchResponse]] = {}
+_hf_inspect_cache: dict[str, tuple[float, HFInspectResponse]] = {}
+_CACHE_TTL_SEARCH = 60.0  # seconds
+_CACHE_TTL_INSPECT = 300.0  # seconds
+
+# Allowlist regexes for user-supplied request parameters. Kept as re.compile
+# objects at module scope so CodeQL's py/partial-ssrf query sees the inline
+# fullmatch() guards as barriers on values that feed HF Hub URLs.
+_MODEL_ID_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}/[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$")
+_SEARCH_TERM_RE = re.compile(r"^[A-Za-z0-9 _.,'+-]{1,200}$")
+
+
+@app.get("/api/hf/curated")
+@app.get("/api/hf/curated/")
+def hf_curated() -> dict:
+    """Return config-driven list of curated Hugging Face models."""
+    import yaml
+    config_path = Path(__file__).resolve().parent / "config" / "curated_models.yaml"
+    if config_path.exists():
+        with open(config_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+            return data or {"models": []}
+    return {"models": []}
+
+
+@app.get("/api/hf/search", response_model=HFSearchResponse)
+@app.get("/api/hf/search/", response_model=HFSearchResponse)
+def hf_search(query: str = "", limit: int = 10) -> HFSearchResponse:
+    """Search Hugging Face Hub for text generation models with caching and safety bounds."""
+    query = (query or "").strip()[:200]  # Sanitize and cap length
+    limit = max(1, min(int(limit), 25))  # Bound limit between 1 and 25
+
+    from app.hf_guard import safe_urlopen
+
+    if query and not _SEARCH_TERM_RE.fullmatch(query):
+        # Reject control characters / non-url-safe input with an empty result.
+        logger.warning("Rejected non-printable HF search term: %s", query.replace("\n", ""))
+        return HFSearchResponse(query=query, limit=limit, models=[])
+
+    cache_key = f"{query}:{limit}"
+    now = time.time()
+    if cache_key in _hf_search_cache:
+        ts, cached_resp = _hf_search_cache[cache_key]
+        if now - ts < _CACHE_TTL_SEARCH:
+            return cached_resp
+
+    import urllib.error
+    import urllib.parse
+
+    params: dict[str, str] = {"limit": str(limit), "filter": "text-generation"}
+    if query:
+        params["search"] = query
+    url = "https://huggingface.co/api/models?" + urllib.parse.urlencode(params)
+
+    try:
+        import json
+
+        with safe_urlopen(url) as resp:
+            if resp.status != 200:
+                raise HTTPException(status_code=502, detail="Failed to fetch search results from Hugging Face Hub.")
+            raw_data = json.loads(resp.read(1 << 20).decode("utf-8"))  # Limit response size to 1MB
+            
+            models = []
+            for item in raw_data:
+                model_id = str(item.get("id") or item.get("modelId") or "")
+                if not model_id:
+                    continue
+                models.append(
+                    HFModelMeta(
+                        id=model_id,
+                        author=item.get("author", model_id.split("/")[0] if "/" in model_id else ""),
+                        downloads=int(item.get("downloads", 0)),
+                        likes=int(item.get("likes", 0)),
+                        tags=item.get("tags", [])[:10],
+                        pipeline_tag=str(item.get("pipeline_tag", "")),
+                        last_modified=str(item.get("lastModified", "")),
+                        private=bool(item.get("private", False)),
+                    )
+                )
+            result = HFSearchResponse(query=query, limit=limit, models=models)
+            _hf_search_cache[cache_key] = (now, result)
+            return result
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        logger.warning("HF Hub search failed for '%s': %s", query.replace("\n", ""), exc)
+        # Return empty search result fallback on error or network offline
+        return HFSearchResponse(query=query, limit=limit, models=[])
+
+
+@app.get("/api/hf/inspect", response_model=HFInspectResponse)
+@app.get("/api/hf/inspect/", response_model=HFInspectResponse)
+def hf_inspect(model_id: str) -> HFInspectResponse:
+    """Fetch HF model config.json and compute deterministic EffectiveCapabilities matrix without downloading model weights."""
+    from app.hf_guard import safe_urlopen
+
+    model_id = (model_id or "").strip()
+    if not _MODEL_ID_RE.fullmatch(model_id):
+        raise HTTPException(status_code=400, detail="Invalid Hugging Face model ID format.")
+
+    now = time.time()
+    if model_id in _hf_inspect_cache:
+        ts, cached_resp = _hf_inspect_cache[model_id]
+        if now - ts < _CACHE_TTL_INSPECT:
+            return cached_resp
+
+    try:
+        import json
+        import urllib.parse
+
+        # 1. Fetch commit revision SHA metadata
+        meta_url = "https://huggingface.co/api/models/" + urllib.parse.quote(model_id, safe="/")
+        revision = "main"
+        try:
+            with safe_urlopen(meta_url) as resp:
+                if resp.status == 200:
+                    meta_json = json.loads(resp.read(1 << 20).decode("utf-8"))
+                    revision = meta_json.get("sha") or meta_json.get("revision") or "main"
+        except urllib.error.HTTPError as meta_err:
+            if meta_err.code in (401, 403):
+                _hf_inspect_cache[model_id] = (now, None)  # type: ignore[assignment]  # negative cache
+                raise HTTPException(status_code=401, detail=f"Model '{model_id}' is gated or private.") from meta_err
+            if meta_err.code == 404:
+                _hf_inspect_cache[model_id] = (now, None)  # type: ignore[assignment]
+                raise HTTPException(status_code=404, detail=f"Model '{model_id}' not found on Hugging Face Hub.") from meta_err
+            # Other HTTP errors: fall through to the generic handler below.
+
+        # 2. Fetch config.json
+        config_url = "https://huggingface.co/" + urllib.parse.quote(model_id, safe="/") + "/raw/" + urllib.parse.quote(revision, safe="") + "/config.json"
+        try:
+            with safe_urlopen(config_url) as resp:
+                if resp.status != 200:
+                    _hf_inspect_cache[model_id] = (now, None)  # type: ignore[assignment]
+                    raise HTTPException(status_code=404, detail=f"Config for model '{model_id}' not found on Hugging Face Hub.")
+                config_json = json.loads(resp.read(1 << 20).decode("utf-8"))
+        except urllib.error.HTTPError as cfg_err:
+            if cfg_err.code in (401, 403):
+                _hf_inspect_cache[model_id] = (now, None)  # type: ignore[assignment]
+                raise HTTPException(status_code=401, detail=f"Model '{model_id}' is gated or private.") from cfg_err
+            if cfg_err.code == 404:
+                _hf_inspect_cache[model_id] = (now, None)  # type: ignore[assignment]
+                raise HTTPException(status_code=404, detail=f"Config for model '{model_id}' not found on Hugging Face Hub.") from cfg_err
+            raise
+
+        # 3. Select deterministic adapter & compute capabilities
+        adapter = select_model_adapter(config_json)
+        mod_caps = adapter.get_capabilities(config_json)
+        backend_caps = BackendCapabilities(
+            backend_name="hf_local",
+            can_capture_attention=True,
+            can_capture_hidden_states=True,
+            can_ablate=True,
+            can_patch=True,
+        )
+        runtime_caps = RuntimeCapabilities(device="cpu")
+        eff_caps = calculate_effective_capabilities(mod_caps, backend_caps, runtime_caps)
+
+        result = HFInspectResponse(
+            model_id=model_id,
+            revision=revision,
+            architecture=mod_caps.architecture,
+            model_type=str(config_json.get("model_type", "")),
+            parameter_count=mod_caps.parameter_count,
+            max_context_length=mod_caps.max_context_length,
+            estimated_vram_gb=mod_caps.vram_estimate.estimated_vram_gb if mod_caps.vram_estimate else 2.0,
+            estimation_basis=mod_caps.vram_estimate.estimation_basis if mod_caps.vram_estimate else "",
+            compatibility_level=eff_caps.compatibility_level,
+            compatibility_reason=eff_caps.compatibility_reason,
+            capabilities=eff_caps.model_dump(),
+        )
+        _hf_inspect_cache[model_id] = (now, result)
+        return result
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        logger.warning("HF inspection rejected for '%s': %s", model_id.replace("\n", ""), exc)
+        raise HTTPException(status_code=400, detail="Model inspection blocked by security policy.") from exc
+    except Exception as exc:
+        logger.error("HF inspection error for '%s': %s", model_id.replace("\n", ""), exc)
+        raise HTTPException(status_code=500, detail="Failed to inspect model.") from exc
+
+
+@app.get("/api/model/capabilities")
+@app.get("/api/model/capabilities/")
+async def model_capabilities() -> dict:
+    """Return effective capabilities of currently loaded model."""
+    eng = _require_engine()
+    from app.inference.adapters import select_model_adapter
+    config_dict = {
+        "architectures": [eng.model.__class__.__name__] if getattr(eng, "model", None) else ["Qwen2ForCausalLM"],
+        "model_type": eng.model_type or "qwen2",
+        "num_hidden_layers": eng.num_layers,
+        "hidden_size": eng.hidden_size,
+    }
+    adapter = select_model_adapter(config_dict)
+    mod_caps = adapter.get_capabilities(config_dict)
+    backend_caps = BackendCapabilities(backend_name="hf_local")
+    runtime_caps = RuntimeCapabilities(device=eng.device)
+    eff = calculate_effective_capabilities(mod_caps, backend_caps, runtime_caps)
+    return eff.model_dump()
 
 
 @app.post("/analyze", response_model=AnalyzeResponse)
 async def analyze(req: AnalyzeRequest) -> AnalyzeResponse:
-    eng = _require_engine()
+    _require_engine()
     try:
-        # The forward pass is CPU/GPU-bound and holds an internal lock; run it off
-        # the event loop so the server stays responsive.
+        # Route analyze call through InferenceBackendRegistry
         import anyio
 
-        data = await anyio.to_thread.run_sync(eng.analyze, req.sentence)
+        backend = backend_registry.get_backend("hf_local")
+        resp = await anyio.to_thread.run_sync(
+            asyncio.run, backend.analyze(req.sentence)
+        )
     except TokenizedTooLong as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return resp
+
+
+
+@app.post("/analyze/image", response_model=AnalyzeResponse)
+async def analyze_image(req: AnalyzeImageRequest) -> AnalyzeResponse:
+    """Vision-transformer forward pass over an image (issue #87).
+
+    Patches are surfaced as "tokens"; every value is a real forward-pass
+    number from the loaded vision model.
+    """
+    eng = _require_engine()
+    if eng.mode != "vision":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Loaded model ({eng.mode}) is not a vision transformer.",
+        )
+    import anyio
+
+    data = await anyio.to_thread.run_sync(eng.analyze_image, req.image)
     return AnalyzeResponse(**data)
 
 
@@ -300,6 +684,29 @@ async def ablate_analyze(req: AblateRequest) -> dict:
     return data
 
 
+@app.post("/patch/analyze")
+async def patch_analyze(req: PatchRequest) -> dict:
+    """Activation patching (issue #75): run the target sentence with the
+    residual stream at ``patch_layers`` replaced by the source sentence's
+    captured states. Returns the patched analysis plus the clean (unpatched)
+    and source analyses for comparison."""
+    eng = _require_engine()
+    import anyio
+
+    def run():
+        return eng.analyze_patched(
+            req.sentence,
+            req.source_sentence,
+            list(req.patch_layers),
+        )
+
+    try:
+        data = await anyio.to_thread.run_sync(run)
+    except TokenizedTooLong as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return data
+
+
 @app.websocket("/ws/generate")
 async def ws_generate(ws: WebSocket) -> None:
     """Stream a real greedy generation, one message per generated token.
@@ -330,15 +737,48 @@ async def ws_generate(ws: WebSocket) -> None:
         await ws.close()
         return
 
-    max_new_tokens = req.get("max_new_tokens", 40)
-    top_k = req.get("top_k", 10)
+    # --- Safe numeric coercions: guard against null/None from JSON (#280) ---
+    def _to_float(val, default: float) -> float:
+        try:
+            return float(val) if val is not None else default
+        except (TypeError, ValueError):
+            return default
+
+    def _to_int(val, default: int) -> int:
+        try:
+            return int(val) if val is not None else default
+        except (TypeError, ValueError):
+            return default
+
+    max_new_tokens = _to_int(req.get("max_new_tokens"), 40)
+    top_k = _to_int(req.get("top_k"), 10)
+    temperature = _to_float(req.get("temperature"), 1.0)
+    top_p = _to_float(req.get("top_p"), 1.0)
+    draft_gamma = _to_int(req.get("draft_gamma"), 4)
+    window_size = _to_int(req.get("window_size"), 512)
+    seed = req.get("seed") or None
     use_chat_template = bool(req.get("use_chat_template", True))
     include_catalog = bool(req.get("trace", False))
     record_trace = bool(req.get("record_trace", False))
+    decoding_mode = req.get("decoding_mode", "greedy")
+    needle = req.get("needle") or None
+    # Issue #85: when `gguf` names a server-side .gguf, generation runs on the
+    # real quantized weights through llama.cpp instead of full-precision PyTorch.
+    gguf_path: str | None = req.get("gguf") or None
+    if gguf_path:
+        # Open early so errors surface as an error frame instead of raising
+        # HTTPException after accept (which leaves the socket in a broken state).
+        try:
+            _gguf_engine_for(gguf_path)
+        except HTTPException as exc:
+            await ws.send_json({"type": "error", "message": exc.detail})
+            await ws.close()
+            return
 
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue = asyncio.Queue(maxsize=32)
     SENTINEL = object()
+    stop_event = asyncio.Event()
 
     # Trace recorder — captures frames when record_trace is requested.
     recorder: TraceRecorder | None = None
@@ -346,9 +786,21 @@ async def ws_generate(ws: WebSocket) -> None:
     def worker() -> None:
         nonlocal recorder
         try:
-            for frame in engine.generate_steps(
-                prompt, max_new_tokens, top_k, use_chat_template, include_catalog
-            ):
+            if gguf_path:
+                frames = _gguf_engine_for(gguf_path).generate(
+                    prompt, int(max_new_tokens), int(top_k),
+                    temperature=temperature, top_p=top_p,
+                    decoding_mode=decoding_mode,
+                )
+            else:
+                frames = engine.generate_steps(
+                    prompt, max_new_tokens, top_k, use_chat_template, include_catalog,
+                    decoding_mode, window_size, draft_gamma, needle,
+                    temperature, top_p, seed,
+                )
+            for frame in frames:
+                if stop_event.is_set():
+                    return
                 # Tee to the recorder for trace capture.
                 if recorder is not None:
                     if frame.get("type") == "meta":
@@ -358,11 +810,14 @@ async def ws_generate(ws: WebSocket) -> None:
                     elif frame.get("type") == "done":
                         recorder.finalize(frame)
                 # .result() blocks this thread until the queue has room -> backpressure.
+                if stop_event.is_set():
+                    return
                 asyncio.run_coroutine_threadsafe(queue.put(frame), loop).result()
-        except Exception as exc:  # surface generation errors to the client
-            asyncio.run_coroutine_threadsafe(
-                queue.put({"type": "error", "message": str(exc)}), loop
-            ).result()
+        except Exception as exc:  # noqa: BLE001 — surface generation errors to the client
+            if not stop_event.is_set():
+                asyncio.run_coroutine_threadsafe(
+                    queue.put({"type": "error", "message": str(exc)}), loop
+                ).result()
         finally:
             asyncio.run_coroutine_threadsafe(queue.put(SENTINEL), loop)
 
@@ -370,7 +825,7 @@ async def ws_generate(ws: WebSocket) -> None:
     if record_trace:
         recorder = TraceRecorder({"prompt": prompt})
 
-    worker_future = loop.run_in_executor(None, worker)
+    worker_task = asyncio.create_task(asyncio.to_thread(worker))
     try:
         while True:
             frame = await queue.get()
@@ -378,21 +833,24 @@ async def ws_generate(ws: WebSocket) -> None:
                 break
             await ws.send_json(frame)
     except WebSocketDisconnect:
-        pass
+        logger.info("WebSocket connection closed by client.")
     finally:
+        stop_event.set()
+        worker_task.cancel()
+        await asyncio.gather(worker_task, return_exceptions=True)
         # Store the completed trace so it can be downloaded later.
         if recorder is not None and recorder._done is not None:
             _last_trace = recorder.build()
+            safe_prompt = prompt[:80].replace("\r", " ").replace("\n", " ")
             logger.info(
                 "Trace recorded: %d frames, prompt=%r",
                 len(recorder._frames),
-                prompt[:80],
+                safe_prompt,
             )
-        await worker_future
         try:
             await ws.close()  # graceful close frame after the stream ends
         except RuntimeError:
-            pass  # already closed / client gone
+            logger.debug("WebSocket already closed.")
 
 
 # --------------------------------------------------------------------------- #

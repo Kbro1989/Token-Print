@@ -23,6 +23,7 @@ TokenPrint is actively evolving. The ultimate goal is to become the standard int
 
 ### Milestone 3: Client-side Inference
 - Utilizing **WebGPU** (via WebLLM or Transformers.js) to run actual inference directly on the GGUF files dropped into the browser, completely removing the need for the Python backend for basic use cases.
+- **Status: in progress (Phase 5.2, Stage B)** — tracked under [#295](https://github.com/Sudharsanselvaraj/Token-Print/issues/295) with sub-issues [#311](https://github.com/Sudharsanselvaraj/Token-Print/issues/311)–[#314](https://github.com/Sudharsanselvaraj/Token-Print/issues/314). The frame-producer seam for in-browser generation shipped in [#315](https://github.com/Sudharsanselvaraj/Token-Print/pull/315).
 
 ### Milestone 4: Multi-Model Diffing
 - Loading two traces from two different quantized versions of the same model (e.g., Q4 vs FP16) and rendering a visual 3D diff to see exactly where the quantization errors accumulate during the forward pass.

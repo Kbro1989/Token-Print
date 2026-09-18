@@ -1,196 +1,158 @@
+<a name="top"></a>
 <div align="center">
-  <img src="TokenPrint logo.png" alt="TokenPrint" width="350" />
+  <img src="TokenPrint logo.png" alt="TokenPrint" width="360" />
+
+  <h3>Stop reading architecture diagrams. Watch your model think.</h3>
+  <p><b>A real 3D inspector wired into a real forward pass — not an illustration of one.</b></p>
+
+  <p>
+    <a href="https://github.com/Sudharsanselvaraj/Token-Print/actions/workflows/ci.yml"><img src="https://github.com/Sudharsanselvaraj/Token-Print/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-22c55e.svg?style=flat" alt="License: MIT" /></a>
+    <a href="https://github.com/Sudharsanselvaraj/Token-Print/stargazers"><img src="https://img.shields.io/github/stars/Sudharsanselvaraj/Token-Print?style=flat&color=0a0a0a&label=stars" alt="Stars" /></a>
+    <a href="https://github.com/Sudharsanselvaraj/Token-Print/commits/main"><img src="https://img.shields.io/github/last-commit/Sudharsanselvaraj/Token-Print?style=flat&color=0a0a0a&label=last%20commit" alt="Last commit" /></a>
+    <img src="https://img.shields.io/badge/data-100%25%20real%20forward%20pass-0a0a0a.svg?style=flat" alt="Real data only" />
+    <a href="GOOD_FIRST_ISSUES.md"><img src="https://img.shields.io/badge/good%20first%20issues-26-orange.svg?style=flat" alt="26 good first issues" /></a>
+  </p>
+
+  <p>
+    <a href="#quickstart"><b>Quickstart</b></a> ·
+    <a href="docs/README.md"><b>Docs</b></a> ·
+    <a href="wiki/Home.md"><b>Wiki</b></a> ·
+    <a href="ROADMAP.md"><b>Roadmap</b></a> ·
+    <a href="CONTRIBUTING.md"><b>Contributing</b></a>
+  </p>
 </div>
-
-<h3 align="center">See a language model think — real internals, real forward pass, real-time 3D.</h3>
-
-<p align="center">
-  <a href="https://github.com/Sudharsanselvaraj/Token-Print/actions/workflows/ci.yml"><img src="https://github.com/Sudharsanselvaraj/Token-Print/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-22c55e.svg?style=flat" alt="License: MIT" /></a>
-  <img src="https://img.shields.io/badge/data-100%25%20real%20forward%20pass-0a0a0a.svg?style=flat" alt="Real data only" />
-  <img src="https://img.shields.io/badge/backend-FastAPI%20·%20PyTorch-009688.svg?style=flat" alt="Backend: FastAPI + PyTorch" />
-  </a>
-  <a href="https://github.com/Sudharsanselvaraj/Token-Print">
-  <img src="https://img.shields.io/github/stars/Sudharsanselvaraj/Token-Print?style=flat&color=0a0a0a&label=stars" alt="Stars" />
-</a>
-</p>
 
 ---
 
 <p align="center">
   <img src=".github/assets/demo.gif" alt="TokenPrint — live demo" width="820" />
+  <br />
+  <sub><a href=".github/assets/demo.mp4">▶ full demo (.mp4)</a></sub>
 </p>
 
-**TokenPrint** is a browser-based 3D inspector for the internals of a language model. Load a
-live model or drop in a `.gguf` file and explore its tensors, run a real greedy generation
-op-by-op, or walk through the transformer step by step. Every number you see is **real** —
-parsed straight from a model file or produced by an actual forward pass. Nothing is
-illustrative, sampled from noise, or hardcoded.
+Every other LLM visualizer gives you one of two things: a static architecture diagram, or a
+"visualization" quietly running on fake numbers. **TokenPrint does neither.** Load
+`Qwen2.5-0.5B-Instruct` live or drop in any local `.gguf`, and watch attention heads, RoPE
+rotations, and the residual stream move in real 3D — every value traced back to
+`named_parameters()`, a real forward pass, or the GGUF binary header itself.
 
-> [!TIP]
-> New here? Open the **Architecture** tab and hit **Use live Qwen model** — you'll get a
-> point cloud of the real `Qwen/Qwen2.5-0.5B-Instruct` tensors (494,032,768 params, 290
-> tensors) with hover-to-inspect names, shapes, and dtypes.
+## Why it hits different
+
+-  **Every number is real.** No `Math.random`, no placeholder tensors — a build-time script
+  fails CI outright if one sneaks into app code.
+-  **GQA you can actually see.** 14 query heads, 2 KV groups — rendered as real geometry
+  clustered exactly that way, not a diagram claiming it.
+-  **Four modes, one engine.** Architecture, Generation, Walkthrough, Debugger — pick your
+  depth, from "just show me the model" to breakpoints and activation ablation.
+-  **Footnoted like a paper.** Click RoPE, SwiGLU, RMSNorm, GQA, or an induction-head pair
+  and get the real citation — Vaswani, Su, Shazeer, Ainslie, Anthropic's transformer-circuits
+  work — not a vibes-based tooltip.
+-  **Broad model support.** Qwen, Llama 2/3/3.2, Gemma, Mistral/Mixtral, DeepSeek/MoE,
+  GPT-2/Pythia, or any local `.gguf` — parsed client-side, nothing uploaded.
+-  **Honest about its own gaps.** See [below](#the-parts-we-havent-faked-but-havent-solved-either) — known limitations stated plainly, not buried in an issue tracker.
 
 ## Quickstart
 
 ```bash
-# 1. Backend — loads Qwen2.5-0.5B-Instruct once (Apple MPS / CPU fallback)
-cd backend
-python3 -m venv .venv --system-site-packages
+# backend — loads Qwen2.5-0.5B-Instruct once (Apple MPS / CPU fallback)
+cd backend && python3 -m venv .venv --system-site-packages
 source .venv/bin/activate && pip install -r requirements.txt
 python -m uvicorn app.main:app --app-dir . --port 8000
 ```
 
 ```bash
-# 2. Frontend — Next.js + React Three Fiber
-cd frontend
-npm install
-npm run dev            # http://localhost:3000
+# frontend
+cd frontend && npm install && npm run dev   # → http://localhost:3000
 ```
 
-Open **http://localhost:3000** and pick a mode from the top bar. No model file is required
-for the live-model view; drag any local `.gguf` onto the drop zone to inspect it instead
-(the file is parsed in-browser — nothing is uploaded).
+No model file needed for the live view. Want native GGUF execution instead?
+`pip install -r backend/requirements-gguf.txt`.
 
-## The four modes
+## Receipts, not vibes
 
-| Mode | What it shows | Where the data comes from |
-| ---- | ------------- | ------------------------- |
-| **Architecture** | A 3D point cloud of every real tensor (layers as depth-colored panels), a searchable tensor list with hover/click inspection, and a real-data **model overview card** (params, layers, attn/KV heads, hidden, FFN, vocab, context) shown until a tensor is selected. Also a **2D tile grid** (tensors grouped by role, searchable), an SVG **topology view**, a **model info pane**, and a **quantization compare** panel that dequantizes a selected tensor from two GGUFs and diffs the real value distributions. | `GET /architecture` (live Qwen `named_parameters()`) **or** a client-side `.gguf` binary parser + `lib/gguf/dequant.ts`. |
-| **Generation** | A real greedy generation streamed over WebSocket that **autoplays** token-by-token, layer-by-layer. The stack renders **distinctive per-operation geometry** — one blade per real attention head (clustered into KV groups for GQA), a SwiGLU funnel sized by the real FFN ratio, and RMSNorm waists — with a follow-mode camera, speed multiplier, skip-to-layer/token, and a live **pre-fill vs decode** KV-cache readout. The right panel shows the architecture-correct LaTeX formula, param count, weight preview, and optional raw dev values; a real **top-k probability skyline** sits at the output. | `WS /ws/generate` with `trace:true` — a real per-op catalog + per-token top-k, phase, and per-layer activation stats. |
-| **Walkthrough** | A chaptered explanation (Overview → Tokenization → Embedding → RMSNorm → Self-Attention → MLP → Softmax) that **autoplays chapters**, advancing the 3D view in lockstep with eased camera moves. Chapters are **gated on real data** — they render a spinner with elapsed time rather than placeholder text. Includes the **logit lens** (what the model would predict at every layer), a **prediction game** on the real top-k, and curated multilingual prompts (Tamil, Hindi, Chinese, emoji) that make byte-fallback tokenization visible. | One real `POST /analyze` (attention + PCA geometry + per-layer logit lens). |
-| **Debugger** | A tiled engineer dashboard: **breakpoints** that halt autoplay at a chosen op, a **flame graph** over the real op catalog, **anomaly sentinels** (z-score outliers in per-layer activation), **watch expressions**, a sortable **layer table**, a **head grid** (head×head attention similarity), **ablation** with a real before→after logit-lens diff, **induction-head lab**, **trace replay/branching**, and raw **`.npz`/`.csv` export**. | `POST /debug/analyze`, `POST /ablate/analyze`, `GET /debug/ops`, and the recorded trace. |
+- `GET /architecture` reports **494,032,768** params on live Qwen — the exact sum of all
+  **290** real tensors, every time.
+- The op catalog is real: **243 ops** in true forward order, matching the actual module graph.
+- Provenance is tagged on everything you see — `REAL` / `DERIVED` / `CONCEPTUAL` /
+  `SIMULATION` — so you always know whether a number came from the model or from us filling a
+  gap.
 
-Formulas are **architecture-aware**: the family is detected from the model, so Qwen/Llama
-render **RMSNorm · RoPE · SwiGLU · GQA** and GPT-2-style models render **LayerNorm · learned
-positions · GELU** — never the wrong set.
+Full evidence, five independent verification scripts, and the CI regression gate:
+[`docs/verification.md`](docs/verification.md).
 
-**Geometry is data-driven, not decorative.** In the generation stack every proportion traces
-to a real dimension: the blade count equals the real head count (14 query heads clustered into
-2 KV groups — that's GQA you can see), the MLP funnel's belly is sized by the real
-`ffn_size / hidden_size` ratio (≈5.4× for Qwen2.5-0.5B), and each block shows its two RMSNorm
-waists. The **KV-cache phase** is real too: step 0 is a pre-fill over the whole prompt
-(39 positions), every later step is a single-token decode reusing the cached prefix — the
-UI labels and visibly shrinks the work accordingly. Autoplay pacing is normalized (never
-fabricated in-between frames); a dropped WebGL context recovers automatically and falls back
-to a readable message rather than a broken canvas.
+## The parts we haven't faked, but haven't solved either
 
-## Architecture
+- Quantized GGUF inference is real, but `llama.cpp` doesn't expose per-layer activations —
+  layer lighting is disabled there rather than faked.
+- Attention weight ≠ causal proof. High attention mass is a signal, not evidence the model
+  *needed* that token ([docs/visual-mapping.md](docs/visual-mapping.md#causality-warning)).
+- Per-layer timings are real wall-clock, but unsynchronized on MPS/CUDA — treated as a rough
+  signal, badged `PROXY · NOT MS` when we can't back it, never dressed up as precise ms.
 
-- **Backend** (`backend/`) — FastAPI. `GET /architecture` (real tensors + config, no forward
-  pass), `POST /analyze` (real attention + PCA geometry + per-layer logit lens),
-  `WS /ws/generate` (streamed greedy generation; `trace:true` adds the real per-op catalog,
-  `record_trace:true` tees the stream into a downloadable trace), `GET /trace` +
-  `POST /trace/replay` (record & replay), `GET /debug/ops` + `POST /debug/analyze`
-  (stepped inspection), `POST /ablate/analyze` (zero heads/layers and re-run). Modules:
-  `model.py`, `trace.py`, `debug.py`, `ablation.py`, `reduce.py`, `schemas.py`. Loads
-  `Qwen/Qwen2.5-0.5B-Instruct` once on Apple **MPS** (`attn_implementation="eager"`, float32 —
-  eager is mandatory for real attention data).
-- **Frontend** (`frontend/`) — Next.js (app-router, TS) + React Three Fiber. `AppShell` is a
-  **docked shell** (CSS grid: `"top top top" / "side canvas right" / "bot bot bot"`) — no
-  floating overlays. `lib/gguf/` client-side GGUF parser + `dequant.ts`;
-  `lib/formulas.ts` KaTeX formula sets; `lib/pointcloud.ts` tensor→points;
-  `lib/playback.ts` (layer/op mapping + KV phase); `lib/sceneColors.ts` (component-class
-  colors); `lib/useKeyboard.ts` (Space / F10 / F11 / J / K / B); `lib/useSnapshotUrl.ts`
-  (shareable moment URLs); `lib/prompts.ts` (multilingual tokenization presets);
-  `components/PlaybackEngine.tsx` (the single autoplay ticker, gated on data readiness);
-  `SceneLoader.tsx` (WebGL context-loss recovery + fallback); scenes under
-  `components/scenes/` (`TransformerStack`, `GenerationScene`, `WalkthroughScene`,
-  `TensorCloud`, `KvCacheVolume`).
-
-**The geometry is architecturally honest.** The residual stream renders as a continuous spine
-with attention and MLP as **branches** that read a normalized copy and add their delta back at
-visible merge nodes — not as sequential stations on a pipe. RMSNorm is a rescaling collar (896
-→ 896, magnitude changes, width doesn't), SwiGLU shows its twin `gate_proj`/`up_proj` prongs
-meeting at an element-wise multiply, RoPE appears as a helical twist on Q/K, and the KV cache
-is a real spatial object that grows through pre-fill and decode.
-
-> [!NOTE]
-> The point cloud uses `THREE.Points` (one draw call), not instanced meshes — the right tool
-> for hundreds of thousands of points on an integrated GPU. The GGUF parser reads only the
-> file **header** (`File.slice`), so multi-GB models parse instantly and nothing is uploaded.
-
-## Proving the data is real
-
-TokenPrint's whole claim is that **every number is real**. It's checked, not asserted:
-
-- **`GET /architecture`** — qwen2 reports **494,032,768** params, exactly the sum of all
-  **290** tensors.
-- **GGUF parser** — verified against real local GGUF v3 files: **qwen3** (399 tensors, Q4_K,
-  8.19B) and **llama 3.2** (255 tensors, Q4_K, 3.21B). Tensor counts match the binary header;
-  each shows its own real vocab / RoPE base / context.
-- **`backend/scripts/verify_trace.py`** — the op catalog is real: **243 ops** in true forward
-  order, `q_proj` L0 = **803,712** params (matches the module), cumulative "parameters used" =
-  **630M**.
-- **`backend/scripts/verify_real_data.py`** / **`verify_geometry.py`** — attention and PCA
-  geometry match an independent forward pass; deterministic across runs.
-- **`frontend/scripts/verify-data.sh`** — a **build-time guard**: `npm run build` fails if
-  `Math.random` appears anywhere in application code (`components/`, `lib/`, `app/`), with a
-  narrow allowlist for genuine visual jitter (point-cloud scale, layout). The "no fabricated
-  numbers" rule is enforced mechanically, not by reviewer discipline.
-- **`scripts/trace_diff.py`** — CI regression gate: diffs two recorded traces with a
-  `--tolerance` and `--fail-on-diff`, comparing tokens, probabilities, and layer stats.
-
-See [`docs/verification.md`](docs/verification.md) for the full evidence with exact numbers.
-
-## Documentation
-
-| Doc | What's inside |
-| --- | ------------- |
-| [Architecture](docs/architecture.md) | How the backend, frontend, and data flow fit together |
-| [API reference](docs/api.md) | The REST + WebSocket endpoints |
-| [Visual mapping](docs/visual-mapping.md) | Real model properties → rendered geometry, colour, motion |
-| [GGUF format](docs/gguf-format.md) | Exactly what the client-side parser reads |
-| [Development](docs/development.md) | Setup and where things live |
-| [Deployment](docs/deployment.md) | Hosting the frontend + backend |
-| [Verification](docs/verification.md) | How "the data is real" is proven |
-| [Roadmap](ROADMAP.md) | Where TokenPrint is headed — the ecosystem gaps and the next four milestones |
-| [Design review](docs/design-review.md) | Full design + engineering audit and the phased "visual debugger" roadmap |
-
-## Roadmap
-
-TokenPrint is an **interactive visual debugger for transformer execution** — the tool that
-answers *"what is my model doing right now, and why?"*. The full plan, including an analysis
-of the gaps in today's visualizer ecosystem, lives in [ROADMAP.md](ROADMAP.md); the phased
-design/engineering audit is in [docs/design-review.md](docs/design-review.md).
-
-**Shipped** — record & replay traces + snapshot URLs, quantization diff on two GGUFs, logit
-lens, breakpoint debugger, raw-component ablation with before→after diffs, local checkpoint
-loading, multilingual tokenization, and the honest-geometry scene rebuild.
-
-**Next** — real per-layer timings, true activation patching, cross-quant trace diffing, then
-MoE routing, in-browser WebGPU inference, and real quantized GGUF execution.
-
-## Honest limitations
-
-We would rather under-claim than overstate. Known gaps, stated plainly:
-
-- **Generation runs on full-precision PyTorch weights, not quantized GGUF.** The GGUF parser
-  reads real structure and metadata, and `dequant.ts` decodes real values for the quantization
-  compare view — but inference itself never executes a quantized model. Closing this needs a
-  llama.cpp integration.
-- The **live-generation model is Qwen** (real, loaded); GPT-2's formula set is wired and
-  selected by architecture but not run locally.
-- **`TimingReadout` does not report real time.** It currently derives a proxy from PCA-space
-  hidden-state magnitudes and labels it in milliseconds — this is a known bug
-  ([#18](https://github.com/Sudharsanselvaraj/Token-Print/issues/18)), not a measurement.
-- **`ActivationPatchCompare` shows a logit-lens trajectory, not activation patching.** The
-  numbers are real; the panel title overstates the method
-  ([#75](https://github.com/Sudharsanselvaraj/Token-Print/issues/75)).
-- `ResidualContributions` measures total residual change per layer in **PCA space**, not the
-  attention-vs-MLP decomposition (that needs per-sub-block forward hooks).
-- The walkthrough's **model-scale selector** rescales the 3D using each reference model's real
-  published parameter count; all worked numbers come from the loaded Qwen forward pass.
+Found a number that's wrong? That's not a low-priority bug — the entire project stands or
+falls on that not happening.
 
 ## Contributing
 
-Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) and the
-[Code of Conduct](CODE_OF_CONDUCT.md). For a concrete list of what needs doing
-(by difficulty, with files and verification steps), see
-[docs/contributing-ideas.md](docs/contributing-ideas.md). Found a wrong number? That's a top-priority bug.
-Security issues: see [SECURITY.md](SECURITY.md) (report privately, not via public issues).
+[**26 curated issues**](GOOD_FIRST_ISSUES.md) across 🟢 Easy → 🔬 Research, each with the
+files to touch and how to verify your fix. Read [CONTRIBUTING.md](CONTRIBUTING.md), pick one,
+send a PR. First-timers genuinely welcome.
+
+<a href="https://buymeacoffee.com/sudharsanselvaraj">
+  <img src="https://cdn.buymeacoffee.com/buttons/v2/default-black.png" alt="Support TokenPrint" height="40">
+</a>
+
+## Creator & contributors
+
+<table>
+<tr>
+<td align="center" width="140">
+  <a href="https://github.com/Sudharsanselvaraj">
+    <img src="https://github.com/Sudharsanselvaraj.png" width="88" alt="Sudharsan Selvaraj" />
+  </a>
+  <br /><b>Sudharsan Selvaraj</b><br /><sub>👑 Creator &amp; Maintainer</sub>
+</td>
+<td valign="middle">Built from scratch as one answer to "what is my model actually doing right now?" Owns the roadmap, reviews every PR, and is the last word on the one rule this whole repo runs on: every number shown must be real.</td>
+</tr>
+</table>
+
+<!-- CONTRIBUTORS:START -->
+<div align="center">
+<a href="https://github.com/Sudharsanselvaraj"><img src="https://github.com/Sudharsanselvaraj.png?size=96" alt="Sudharsanselvaraj" title="Sudharsanselvaraj" width="48" height="48" align="top" /></a>
+<a href="https://github.com/ManoShruthiS"><img src="https://github.com/ManoShruthiS.png?size=96" alt="ManoShruthiS" title="ManoShruthiS" width="48" height="48" align="top" /></a>
+<a href="https://github.com/Sew-a"><img src="https://github.com/Sew-a.png?size=96" alt="Sew-a" title="Sew-a" width="48" height="48" align="top" /></a>
+<a href="https://github.com/Kesavaraja67"><img src="https://github.com/Kesavaraja67.png?size=96" alt="Kesavaraja67" title="Kesavaraja67" width="48" height="48" align="top" /></a>
+<a href="https://github.com/shanky-ux"><img src="https://github.com/shanky-ux.png?size=96" alt="shanky-ux" title="shanky-ux" width="48" height="48" align="top" /></a>
+<a href="https://github.com/Shivamyadav1312"><img src="https://github.com/Shivamyadav1312.png?size=96" alt="Shivamyadav1312" title="Shivamyadav1312" width="48" height="48" align="top" /></a>
+<a href="https://github.com/Deepashaa24"><img src="https://github.com/Deepashaa24.png?size=96" alt="Deepashaa24" title="Deepashaa24" width="48" height="48" align="top" /></a>
+<a href="https://github.com/jk-pvt"><img src="https://github.com/jk-pvt.png?size=96" alt="jk-pvt" title="jk-pvt" width="48" height="48" align="top" /></a>
+<a href="https://github.com/ris422"><img src="https://github.com/ris422.png?size=96" alt="ris422" title="ris422" width="48" height="48" align="top" /></a>
+<a href="https://github.com/Sarvatha02"><img src="https://github.com/Sarvatha02.png?size=96" alt="Sarvatha02" title="Sarvatha02" width="48" height="48" align="top" /></a>
+<a href="https://github.com/Sriram-Selvaperumal"><img src="https://github.com/Sriram-Selvaperumal.png?size=96" alt="Sriram-Selvaperumal" title="Sriram-Selvaperumal" width="48" height="48" align="top" /></a>
+<a href="https://github.com/challenge456"><img src="https://github.com/challenge456.png?size=96" alt="challenge456" title="challenge456" width="48" height="48" align="top" /></a>
+</div>
+<!-- CONTRIBUTORS:END -->
+
+## Everything else
+
+[Architecture](docs/architecture.md) · [API](docs/api.md) · [Roadmap](ROADMAP.md) ·
+[Development](docs/development.md) · [Wiki](wiki/Home.md) — every supported model family,
+transformer concepts, deep dives.
 
 ## License
 
 [MIT](LICENSE) © Sudharsan Selvaraj.
+
+<div align="center">
+
+<a href="https://star-history.com/#Sudharsanselvaraj/Token-Print&Date">
+  <img src="https://api.star-history.com/svg?repos=Sudharsanselvaraj/Token-Print&type=Date" alt="Star History Chart" width="600" />
+</a>
+
+If this helped you actually understand a transformer, **star it** ⭐ — that's how the next
+person finds it.
+
+<sub><a href="#top">Back to top ↑</a></sub>
+
+</div>

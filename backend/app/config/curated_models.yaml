@@ -1,0 +1,48 @@
+# TokenPrint Curated Models Configuration
+# Note: Capability flags in this YAML file serve as UI curation metadata ONLY.
+# The backend ModelAdapter engine remains 100% authoritative for actual compatibility evaluation.
+
+models:
+  - id: Qwen/Qwen2.5-0.5B-Instruct
+    family: qwen
+    recommended: true
+    minimum_memory_gb: 2.0
+    description: Recommended default lightweight model for local real-time visualization and debugging.
+    capabilities_preview:
+      attention: true
+      hidden_states: true
+      logit_lens: true
+      ablation: true
+
+  - id: TinyLlama/TinyLlama-1.1B-Chat-v1.0
+    family: llama
+    recommended: true
+    minimum_memory_gb: 2.0
+    description: Open 1.1B Llama architecture model, small enough for local real-time debugging.
+    capabilities_preview:
+      attention: true
+      hidden_states: true
+      logit_lens: true
+      ablation: true
+
+  - id: gpt2
+    family: gpt2
+    recommended: true
+    minimum_memory_gb: 1.0
+    description: Classic OpenAI GPT-2 model family.
+    capabilities_preview:
+      attention: true
+      hidden_states: true
+      logit_lens: true
+      ablation: true
+
+  - id: microsoft/phi-2
+    family: phi
+    recommended: true
+    minimum_memory_gb: 6.0
+    description: Lightweight open 2.7B transformer from Microsoft.
+    capabilities_preview:
+      attention: true
+      hidden_states: true
+      logit_lens: true
+      ablation: true

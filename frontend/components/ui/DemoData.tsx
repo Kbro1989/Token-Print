@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { useStore } from "@/lib/store";
 
 type DemoEntry = {
@@ -19,6 +19,7 @@ const DEMOS: DemoEntry[] = [
 
 export default function DemoData() {
   const loadTrace = useStore((s) => s.loadTrace);
+  const setTraceGalleryOpen = useStore((s) => s.setTraceGalleryOpen);
   const arch = useStore((s) => s.arch);
   const [loading, setLoading] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -61,13 +62,20 @@ export default function DemoData() {
             disabled={loading === d.id}
           >
             <div className="demo-card-title">
-              {loading === d.id ? <>Loading…</> : <>{d.title} ▶</>}
+              {loading === d.id ? <>Loading…</> : <>{d.title}</>}
             </div>
             <div className="demo-card-desc">{d.description}</div>
           </button>
         ))}
+        <button 
+          className="demo-card" 
+          style={{ marginTop: 8, borderColor: "var(--accent)" }}
+          onClick={() => setTraceGalleryOpen(true)}
+        >
+          <strong>View Trace Gallery</strong>
+        </button>
       </div>
-      {err && <div className="error">⚠ {err}</div>}
+      {err && <div className="error">{err}</div>}
     </div>
   );
 }

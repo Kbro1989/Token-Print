@@ -20,10 +20,93 @@ export interface LogitLensEntry {
   prob: number;
 }
 
+export interface ProvenanceInfo {
+  source_type: "REAL" | "DERIVED" | "CONCEPTUAL" | "SIMULATION";
+  backend: string;
+  device: string;
+  model_id?: string | null;
+  model_revision?: string | null;
+  operation?: string | null;
+  layer?: number | null;
+  head?: number | null;
+  tensor?: string | null;
+  dtype?: string | null;
+  shape?: number[] | null;
+  parent_operation?: string | null;
+  notes?: string | null;
+}
+
+export interface CapabilityStatus {
+  supported: boolean;
+  confidence: "high" | "medium" | "low" | "approximate";
+  reason: string;
+}
+
+export interface VRAMEstimate {
+  estimated_vram_gb: number;
+  estimation_basis: string;
+  confidence: "high" | "medium" | "low" | "approximate";
+}
+
+export interface EffectiveCapabilities {
+  compatibility_level: "High" | "Partial" | "Basic" | "Unsupported";
+  compatibility_reason: string;
+  supports_attention: CapabilityStatus;
+  supports_hidden_states: CapabilityStatus;
+  supports_logit_lens: CapabilityStatus;
+  supports_head_ablation: CapabilityStatus;
+  supports_layer_ablation: CapabilityStatus;
+  supports_activation_patch: CapabilityStatus;
+  vram_estimate?: VRAMEstimate | null;
+}
+
+export interface HFModelMeta {
+  id: string;
+  author: string;
+  downloads: number;
+  likes: number;
+  tags: string[];
+  pipeline_tag: string;
+  last_modified: string;
+  private: boolean;
+}
+
+export interface HFSearchResponse {
+  query: string;
+  limit: number;
+  models: HFModelMeta[];
+}
+
+export interface HFInspectResponse {
+  model_id: string;
+  revision: string;
+  architecture: string;
+  model_type: string;
+  parameter_count?: number | null;
+  max_context_length: number;
+  estimated_vram_gb: number;
+  estimation_basis: string;
+  compatibility_level: "High" | "Partial" | "Basic" | "Unsupported";
+  compatibility_reason: string;
+  capabilities: Record<string, CapabilityStatus | VRAMEstimate>;
+}
+
+export interface CuratedModel {
+  id: string;
+  family: string;
+  recommended: boolean;
+  minimum_memory_gb: number;
+  description?: string;
+  capabilities_preview?: Record<string, boolean>;
+}
+
 export interface AnalyzeResponse {
   sentence: string;
   model: string;
   device: string;
+  // Model family (issue #87): "causal_lm" | "encoder" | "vision".
+  mode?: string;
+  model_type?: string;
   num_layers: number;
   num_heads: number;
   hidden_size: number;
@@ -39,12 +122,50 @@ export interface AnalyzeResponse {
 
   // Phase 4: logit lens (v0.3).
   logit_lens: LogitLensEntry[][][]; // [layer][position][top-5]
+
+  // Issue #87 — encoder / vision payloads.
+  pooled_vector?: number[];
+  pooling_note?: string;
+  image_meta?: { n_patches: number; grid_n: number; format: string | null; mode: string };
+
+  // MoE routing (issue #83) — present only when the loaded model has
+  // mixture-of-experts blocks (router logits captured during the forward).
+  moe_routing?: MoERouting;
+
+  // Phase 0 metadata & capabilities
+  provenance?: ProvenanceInfo | null;
+  capabilities?: EffectiveCapabilities | Record<string, any> | null;
+}
+
+export interface MoERoutingEntry {
+  token: number;
+  experts: { idx: number; weight: number }[];
+}
+
+export interface MoELayerRouting {
+  layer: number;
+  n_experts: number;
+  used: number;
+  routing: MoERoutingEntry[];
+}
+
+export interface MoERouting {
+  per_layer: MoELayerRouting[];
 }
 
 export type District = "tokenizer" | "embedding" | "attention" | "generation";
 
 // --- Overhaul: modes + architecture explorer ----------------------------- //
 export type Mode = "explorer" | "generation" | "walkthrough" | "debugger";
+
+export type GraphViewMode =
+  | "full"
+  | "single_layer"
+  | "attention_flow"
+  | "residual_stream"
+  | "logit_lens"
+  | "activations"
+  | "token_flow";
 
 export interface TensorInfo {
   name: string;
@@ -122,8 +243,42 @@ export interface GenMeta {
   max_new_tokens: number;
   top_k: number;
   decoding: string;
+  decoding_params?: {
+    window_size?: number;
+    draft_gamma?: number;
+    needle?: string | null;
+    temperature?: number;
+    top_k?: number;
+    top_p?: number;
+  };
   uses_kv_cache?: boolean;
   op_catalog?: OpCatalogEntry[];
+  // Issue #85 — when generation ran on quantized GGUF weights via llama.cpp.
+  source?: string;
+  quant?: string;
+  honesty_notes?: string[];
+}
+
+export interface GenDoneStats {
+  decoding_mode?: string;
+  draft_batches?: number;
+  drafts_accepted?: number;
+  acceptance_rate?: number;
+  needle_report?: { needle: string; recalled: boolean; response: string };
+}
+
+export interface GenDone {
+  type: "done";
+  generated_text: string;
+  total_steps: number;
+  decoding_mode?: string;
+  draft_batches?: number;
+  drafts_accepted?: number;
+  acceptance_rate?: number;
+  needle_report?: { needle: string; recalled: boolean; response: string };
+  // Issue #85 — quantized GGUF / llama.cpp provenance.
+  source?: string;
+  quant?: string;
 }
 
 export interface TokenFrame {
@@ -132,11 +287,18 @@ export interface TokenFrame {
   chosen: { id: number; text: string; logprob: number };
   topk: TopKCandidate[];
   layer_stats: number[]; // real mean |activation| per layer (len = num_layer_stats)
+  // Real per-layer latency in milliseconds (len = num_layers, issue #18).
+  layer_timings_ms?: number[];
   eos: boolean;
   // Real KV-cache accounting (present when the backend uses a cache).
   phase?: "prefill" | "decode";
   n_positions?: number; // tokens actually computed this step
   cache_len?: number; // cached positions reused this step
+  // Issue #85 — set on frames produced by the quantized llama.cpp backend.
+  source?: "llama.cpp";
+  // True when the token was drawn from the real sampling distribution
+  // (decoding=sampling) rather than argmax. Honest provenance for the UI.
+  sampled?: boolean;
 }
 
 export type GenStatus = "idle" | "streaming" | "done" | "error";
@@ -148,7 +310,7 @@ export interface Trace {
   model: string;
   meta: GenMeta;
   frames: TokenFrame[];
-  done: { generated_text: string; total_steps: number } | null;
+  done: GenDone | null;
 }
 
 // --- v0.25 Hot-spot ranking ------------------------------------------------ //
@@ -168,4 +330,26 @@ export interface DebugSnapshotEntry {
 
 export interface DebugSnapshot {
   [modulePath: string]: DebugSnapshotEntry;
+}
+
+// --- Activation patching (issue #75) -------------------------------------- //
+export interface PatchInfo {
+  source_sentence: string;
+  target_sentence: string;
+  patch_layers: number[];
+  n_captured: number;
+}
+
+export interface PatchResponse extends AnalyzeResponse {
+  patch: PatchInfo;
+  analysis_clean: AnalyzeResponse;
+  analysis_source: AnalyzeResponse;
+}
+
+export interface TraceAnnotation {
+  id: string;
+  opIndex?: number;
+  layer?: number;
+  text: string;
+  position: [number, number, number];
 }

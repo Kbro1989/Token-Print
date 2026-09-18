@@ -14,10 +14,21 @@ No niceties. Redesign anything weak.
 
 ---
 
-## Current status (updated 2026-07-20, end of implementation push)
+## Current status (updated 2026-09-16)
 
 **Phases 0, 1, and 2 are complete (36/36). Phase 3 is 10/11, Phase 4 is 11/12.**
-77 of 89 tracked issues are closed. What shipped since this review was written:
+**Phase 5 has started: 5.2 (in-browser WebGPU/ONNX inference) is the active Stage B
+work**, tracked under [#295](https://github.com/Sudharsanselvaraj/Token-Print/issues/295)
+with sub-issues [#311](https://github.com/Sudharsanselvaraj/Token-Print/issues/311)
+(frame-producer seam — shipped in [#315](https://github.com/Sudharsanselvaraj/Token-Print/pull/315)),
+[#312](https://github.com/Sudharsanselvaraj/Token-Print/issues/312) (GPT-2 WebGPU forward pass),
+[#313](https://github.com/Sudharsanselvaraj/Token-Print/issues/313) (in-browser GGUF execution),
+and [#314](https://github.com/Sudharsanselvaraj/Token-Print/issues/314) (browser-vs-backend
+verification harness). A batch of backend robustness fixes also landed since the last
+update: WebSocket live-lock and null-param crash fixes, SSRF redirect/CGNAT blocking,
+`hf/inspect` 404/401 surfacing, and sliding-window `cache_len` reporting.
+
+What shipped before this phase (Phases 0–4 recap):
 
 - **Phase 0** — every credibility bug fixed: duplicate loader, `…` placeholders (chapters now
   gate on data with a spinner + elapsed + retry), empty canvas, RMSNorm naming, formula
@@ -656,10 +667,12 @@ ablate it, resume, and diff the result — like stepping through code.
 
 ### Phase 5 — Platform & flagship visuals (6+ months)
 
+**Started. 5.2 is the active Stage B milestone** (umbrella [#295](https://github.com/Sudharsanselvaraj/Token-Print/issues/295)): the frame-producer seam shipped in [#315](https://github.com/Sudharsanselvaraj/Token-Print/pull/315); GPT-2 WebGPU forward pass, in-browser GGUF execution, and the browser-vs-backend verification harness are tracked in [#311](https://github.com/Sudharsanselvaraj/Token-Print/issues/311)–[#314](https://github.com/Sudharsanselvaraj/Token-Print/issues/314).
+
 | # | Work | Type | Why |
 |---|---|---|---|
 | 5.1 | MoE routing visualization (expert lanes lighting up) | 🆕 | Highest wow/novelty; almost nobody does it well |
-| 5.2 | In-browser WebGPU/ONNX inference | 🆕 | Fuses the demo and the product; TS GGUF parser is the seed |
+| 5.2 | In-browser WebGPU/ONNX inference | 🔧 **active (Stage B)** | Fuses the demo and the product; TS GGUF parser is the seed; 5.2a seam shipped (#315) |
 | 5.3 | Real quantized GGUF execution (llama.cpp) | 🆕 | Closes the honesty gap: generation still runs on full-precision PyTorch |
 | 5.4 | Speculative-decoding, sliding-window, long-context "needle" modes | 🆕 | Research depth; distinct flagship visuals |
 | 5.5 | Vision-transformer & embedding-model modes | 🆕 | Audience expansion beyond causal LMs |

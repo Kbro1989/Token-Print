@@ -1,4 +1,15 @@
-import type { AnalyzeResponse, ArchitectureData, DebugSnapshot, Trace } from "./types";
+import type {
+  AnalyzeResponse,
+  ArchitectureData,
+  DebugSnapshot,
+  PatchResponse,
+  Trace,
+} from "./types";
+import {
+  clientInspectHFModel,
+  clientSearchHFModels,
+  CURATED_MODELS as CLIENT_CURATED,
+} from "./hfHub";
 
 export const API_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -30,6 +41,111 @@ export async function analyzeSentence(
   }
 
   return res.json();
+}
+
+/** GET /health — liveness + which model family is loaded (issue #87). */
+export async function fetchHealth(): Promise<{
+  status: string;
+  model_loaded: boolean;
+  mode?: string | null;
+  model_type?: string | null;
+}> {
+  try {
+    const res = await fetch(`${API_URL}/health`);
+    if (!res.ok) return { status: "error", model_loaded: false };
+    return res.json();
+  } catch {
+    return { status: "error", model_loaded: false };
+  }
+}
+
+/** POST /analyze/image — real vision-transformer forward pass (issue #87). */
+export async function analyzeImage(
+  image: string,
+): Promise<AnalyzeResponse> {
+  const res = await fetch(`${API_URL}/analyze/image`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ image }),
+  });
+  if (!res.ok) {
+    let msg = `Vision analyze failed (${res.status})`;
+    try {
+      const body = await res.json();
+      if (body?.detail) {
+        msg = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail);
+      }
+    } catch {
+      /* non-JSON error body; keep the status message */
+    }
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
+/** GET /gguf/list — server-side GGUF files eligible for quantized generation. */
+export interface GgufItem {
+  name: string;
+  path: string;
+  size_bytes: number;
+  quant: string;
+  loaded: boolean;
+}
+
+export async function listGgufs(): Promise<GgufItem[]> {
+  try {
+    const res = await fetch(`${API_URL}/gguf/list`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data?.files) ? data.files : [];
+  } catch {
+    return [];
+  }
+}
+
+/** POST /gguf/upload — stream an uploaded .gguf to the server data dir. */
+export async function uploadGguf(file: File): Promise<GgufItem> {
+  const body = new FormData();
+  body.append("file", file);
+  const res = await fetch(`${API_URL}/gguf/upload`, {
+    method: "POST",
+    body,
+  });
+  if (!res.ok) {
+    let msg = `GGUF upload failed (${res.status})`;
+    try {
+      const b = await res.json();
+      if (b?.detail) msg = typeof b.detail === "string" ? b.detail : JSON.stringify(b.detail);
+    } catch {
+      /* keep status message */
+    }
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
+/** POST /gguf/open — load a server GGUF's real metadata (and cache the engine). */
+export async function openGguf(path: string): Promise<{
+  ok: boolean;
+  name?: string;
+  architecture?: string;
+  quant?: string;
+  n_vocab?: number;
+  n_ctx?: number;
+  size_bytes?: number;
+  detail?: string;
+}> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/gguf/open`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+    });
+  } catch {
+    return { ok: false, detail: "Backend unreachable" };
+  }
+  return res.ok ? res.json() : { ok: false, detail: `Open failed (${res.status})` };
 }
 
 /** GET /architecture — real model metadata + tensor list (Explorer source). */
@@ -86,9 +202,16 @@ export async function downloadTrace(): Promise<boolean> {
  * into a validated Trace object.  Sends the raw JSON to the backend for
  * validation, or parses it client-side if the backend is unreachable.
  */
-export async function loadTraceFile(file: File): Promise<Trace> {
-  const text = await file.text();
-  const raw = JSON.parse(text);
+export async function loadTraceFile(file: File | Trace | string): Promise<Trace> {
+  let raw: unknown;
+  if (typeof file === "string") {
+    raw = JSON.parse(file);
+  } else if (file && typeof file === "object" && "text" in file && typeof (file as File).text === "function") {
+    const text = await (file as File).text();
+    raw = JSON.parse(text);
+  } else {
+    raw = file;
+  }
   // Try backend validation first.
   try {
     const res = await fetch(`${API_URL}/trace/replay`, {
@@ -101,11 +224,12 @@ export async function loadTraceFile(file: File): Promise<Trace> {
     // Backend unavailable — fall through to client-side validation.
   }
   // Client-side fallback: basic shape check.
+  const r = raw as Record<string, unknown>;
   if (
-    typeof raw.trace_version !== "number" ||
-    raw.trace_version < 1 ||
-    !raw.meta ||
-    !Array.isArray(raw.frames)
+    typeof r.trace_version !== "number" ||
+    r.trace_version < 1 ||
+    !r.meta ||
+    !Array.isArray(r.frames)
   ) {
     throw new Error("Invalid trace file: missing required fields");
   }
@@ -141,3 +265,81 @@ export async function fetchDebugOps(): Promise<
   if (!res.ok) return [];
   return res.json();
 }
+
+// --------------------------------------------------------------------------- //
+// Activation patching (issue #75)
+// --------------------------------------------------------------------------- //
+
+/** POST /patch/analyze — target run with source residual states injected. */
+export async function patchAnalyze(
+  sentence: string,
+  sourceSentence: string,
+  patchLayers: number[],
+): Promise<PatchResponse> {
+  const res = await fetch(`${API_URL}/patch/analyze`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      sentence,
+      source_sentence: sourceSentence,
+      patch_layers: patchLayers,
+    }),
+  });
+  if (!res.ok) {
+    let msg = `Patch failed (${res.status})`;
+    try {
+      const body = await res.json();
+      if (body?.detail) msg = JSON.stringify(body.detail);
+    } catch {
+      /* keep status message */
+    }
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
+// --------------------------------------------------------------------------- //
+// Hugging Face Discovery & Capability Inspection
+// --------------------------------------------------------------------------- //
+//
+// The frontend is a static export (GitHub Pages) with no resident backend, so
+// every /api/hf/* call below prefers the Python backend when reachable and
+// otherwise falls back to direct client-side Hugging Face Hub calls, which
+// huggingface.co serves with permissive CORS.
+
+export async function fetchHFCurated(): Promise<{ models: any[] }> {
+  try {
+    const res = await fetch(`${API_URL}/api/hf/curated`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.models && Array.isArray(data.models)) return data;
+    }
+  } catch {
+    // Backend unreachable — fall back to the bundled curated list below.
+  }
+  return { models: CLIENT_CURATED };
+}
+
+export async function searchHFModels(query: string, limit = 10): Promise<any> {
+  try {
+    const url = `${API_URL}/api/hf/search?query=${encodeURIComponent(query)}&limit=${limit}`;
+    const res = await fetch(url);
+    if (res.ok) return res.json();
+  } catch {
+    // Backend unreachable — fall back to direct Hub search below.
+  }
+  const models = await clientSearchHFModels(query, limit);
+  return { query, limit, models };
+}
+
+export async function inspectHFModel(modelId: string): Promise<any> {
+  try {
+    const url = `${API_URL}/api/hf/inspect?model_id=${encodeURIComponent(modelId)}`;
+    const res = await fetch(url);
+    if (res.ok) return res.json();
+  } catch {
+    // Backend unreachable — fall back to direct Hub inspection below.
+  }
+  return clientInspectHFModel(modelId);
+}
+

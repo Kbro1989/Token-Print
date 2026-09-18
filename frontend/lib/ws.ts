@@ -9,8 +9,21 @@ export interface GenHandlers {
 export interface GenOptions {
   maxNewTokens?: number;
   topK?: number;
+  temperature?: number;
+  topP?: number;
+  seed?: number;
   trace?: boolean;
   recordTrace?: boolean;
+  decodingMode?: "greedy" | "sampling" | "sliding_window" | "speculative";
+  windowSize?: number;
+  draftGamma?: number;
+  needle?: string;
+  // Issue #85: server-side .gguf file name to run quantized llama.cpp inference.
+  gguf?: string;
+  // Phase 5.2a (#311): which producer runs this generation. "ws" talks to the
+  // live backend WebSocket (default); "local" routes through the in-browser
+  // engine seam (5.2b/5.2c). Not serialized to the server.
+  source?: "ws" | "local";
 }
 
 /**
@@ -32,8 +45,16 @@ export function wsGenerate(
         prompt,
         max_new_tokens: opts.maxNewTokens ?? 40,
         top_k: opts.topK ?? 10,
+        temperature: opts.temperature ?? 1.0,
+        top_p: opts.topP ?? 1.0,
+        seed: opts.seed ?? undefined,
         trace: opts.trace ?? false,
         record_trace: opts.recordTrace ?? false,
+        decoding_mode: opts.decodingMode ?? "greedy",
+        window_size: opts.windowSize ?? 512,
+        draft_gamma: opts.draftGamma ?? 4,
+        needle: opts.needle ?? undefined,
+        gguf: opts.gguf ?? undefined,
       }),
     );
   };

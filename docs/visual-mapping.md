@@ -61,3 +61,11 @@ geometry, highlighting the chapter's component. The Tokenizer, Embedding, and
 Self-Attention chapters keep their dedicated districts because those render
 **genuinely computed per-token data** (real PCA of hidden states, real attention
 weights) — richer than generic geometry, and not something to replace with it.
+
+## Causality Warning
+
+> [!WARNING]
+> **Attention Mass ≠ Causal Attribution**
+> Attention weights describe how attention mass is mathematically distributed during a forward pass — they do **not** constitute causal proof of model reasoning or token necessity. A token receiving high attention mass may be strongly attended to without being causally required for the model's final output. Conversely, a token with lower attention mass may still affect output states through residual stream interventions.
+>
+> Visual attention lines shown in TokenPrint describe attention distribution, but should not be interpreted as direct causal attribution.

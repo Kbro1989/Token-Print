@@ -8,7 +8,7 @@ Usage:
 Generates all demo traces defined in DEMOS and saves them to
 frontend/public/demo/.
 """
-import json, sys, time
+import json
 from pathlib import Path
 
 import requests
@@ -41,7 +41,7 @@ BASE = "http://localhost:8000"
 
 def run_generation(prompt: str) -> dict:
     """Start a WebSocket generation and wait for completion, then GET /trace."""
-    import asyncio, json
+    import asyncio
 
     async def _run():
         import websockets

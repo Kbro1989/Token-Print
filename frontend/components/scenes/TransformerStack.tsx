@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Billboard, Text } from "@react-three/drei";
 import { Color, Euler, InstancedMesh, Matrix4, Quaternion, Vector3 } from "three";
+import AnnotationsOverlay from "./AnnotationsOverlay";
 
 // §4 Visual Mapping — distinctive per-operation geometry, faithful to the REAL
 // Qwen2 decoder block (verified against Qwen2.5-0.5B config.json):
@@ -47,6 +48,7 @@ function NormWaist({
   onPointerEnter,
   onPointerLeave,
   onClick,
+  anchorName,
 }: {
   y: number;
   active: boolean;
@@ -56,6 +58,7 @@ function NormWaist({
   onPointerEnter?: () => void;
   onPointerLeave?: () => void;
   onClick?: () => void;
+  anchorName?: string;
 }) {
   const c = active ? color : GRAY;
   const finalColor = hoverColor(c, hovered, active);
@@ -64,7 +67,7 @@ function NormWaist({
   const H = 0.42;
   const sc = hovered ? 1.12 : 1;
   return (
-    <group position={[0, y, 0]} scale={sc}>
+    <group name={anchorName} position={[0, y, 0]} scale={sc}>
       <mesh
         position={[0, H / 2, 0]}
         onPointerEnter={onPointerEnter}
@@ -94,9 +97,9 @@ function NormWaist({
       <mesh rotation={[Math.PI / 2, 0, 0]}>
         <torusGeometry args={[NECK * 0.85, 0.025, 8, 20]} />
         <meshBasicMaterial
-          color="#aaccff"
+          color="#ffffff"
           transparent
-          opacity={active ? 0.7 : hovered ? 0.5 : 0.2}
+          opacity={active ? 0.8 : hovered ? 0.5 : 0.25}
         />
       </mesh>
     </group>
@@ -104,7 +107,7 @@ function NormWaist({
 }
 
 /** SwiGLU MLP: gate+up input prongs → wide belly (ffn) → down-projection.
- *  The gate prong (orange) and up prong (yellow) combine at a junction node,
+ *  The gate prong and up prong combine at a junction node,
  *  representing the element-wise gating that distinguishes SwiGLU from plain ReLU. */
 function MlpFunnel({
   y,
@@ -116,6 +119,7 @@ function MlpFunnel({
   onPointerEnter,
   onPointerLeave,
   onClick,
+  anchorName,
 }: {
   y: number;
   radius: number;
@@ -126,15 +130,15 @@ function MlpFunnel({
   onPointerEnter?: () => void;
   onPointerLeave?: () => void;
   onClick?: () => void;
+  anchorName?: string;
 }) {
   const c = active ? color : GRAY;
   const finalColor = hoverColor(c, hovered, active);
   const sc = hovered ? 1.12 : 1;
   return (
-    <group position={[0, y, 0]} scale={sc}>
-      {/* Gate prong (warm orange, left) — Swish activation.
-          Up prong (gold, right) — linear projection.
-          SwiGLU = Swish(gate(x)) × up(x), hence always paired. */}
+    <group name={anchorName} position={[0, y, 0]} scale={sc}>
+      {/* Gate prong (left) — Swish activation.
+          Up prong (right) — linear projection. */}
       <mesh
         position={[-0.28, 0.62, 0]}
         onPointerEnter={onPointerEnter}
@@ -143,27 +147,27 @@ function MlpFunnel({
       >
         <cylinderGeometry args={[0.14, 0.14, 0.5, 12]} />
         <meshStandardMaterial
-          color="#e88530"
-          emissive="#e88530"
+          color="#d4d4d4"
+          emissive="#d4d4d4"
           emissiveIntensity={active || hovered ? intensity : 0.08}
-          roughness={0.5}
-          metalness={0.24}
+          roughness={0.4}
+          metalness={0.3}
         />
       </mesh>
       <mesh position={[0.28, 0.62, 0]}>
         <cylinderGeometry args={[0.14, 0.14, 0.5, 12]} />
         <meshStandardMaterial
-          color="#d4a030"
-          emissive="#d4a030"
+          color="#a3a3a3"
+          emissive="#a3a3a3"
           emissiveIntensity={active || hovered ? intensity : 0.08}
-          roughness={0.5}
-          metalness={0.24}
+          roughness={0.4}
+          metalness={0.3}
         />
       </mesh>
       {/* Junction: element-wise multiplication of gate × up */}
       <mesh position={[0, 0.38, 0]}>
         <sphereGeometry args={[0.1, 8, 8]} />
-        <meshBasicMaterial color="#ffcc66" transparent opacity={active ? 0.9 : 0.3} />
+        <meshBasicMaterial color="#ffffff" transparent opacity={active ? 0.9 : 0.4} />
       </mesh>
       <mesh position={[0, 0.16, 0]}>
         <cylinderGeometry args={[radius, 0.28, 0.5, 32]} />
@@ -324,6 +328,7 @@ export default function TransformerStack({
 
       {/* Token embedding volume (width ∝ log2 vocab, depth ∝ embedding dim). */}
       <mesh
+        name="wt_embedding"
         position={[0, layerY(-1), 0]}
         onPointerEnter={handleEnter(-1, "embedding")}
         onPointerLeave={handleLeave}
@@ -346,8 +351,13 @@ export default function TransformerStack({
         const isHovered = li === hoveredLayer;
         return (
           <group key={li}>
+            {/* Named world-space anchor for the attention station of this layer,
+                used by the walkthrough camera system to frame Self-Attention. */}
+            <group name={`wt_attn_${li}`} position={[0, yAttn(li), 0]} />
+
             <NormWaist
               y={yNorm1(li)}
+              anchorName={`wt_norm_${li}`}
               active={isActive && activeKind === "norm"}
               hovered={isHovered && hoveredKind === "norm"}
               color={opCol}
@@ -377,16 +387,16 @@ export default function TransformerStack({
                 <group key={`res-${side}`}>
                   <mesh position={[0.18, yB, 0]}>
                     <sphereGeometry args={[0.06, 8, 8]} />
-                    <meshBasicMaterial color="#5ab87a" transparent opacity={isActive ? 0.8 : 0.3} />
+                    <meshBasicMaterial color="#ffffff" transparent opacity={isActive ? 0.9 : 0.35} />
                   </mesh>
                   <mesh position={[-0.18, yM, 0]}>
                     <sphereGeometry args={[0.06, 8, 8]} />
-                    <meshBasicMaterial color="#5a8ab8" transparent opacity={isActive ? 0.8 : 0.3} />
+                    <meshBasicMaterial color="#d4d4d4" transparent opacity={isActive ? 0.8 : 0.3} />
                   </mesh>
                   {/* Subtle connecting arc from merge back toward the residual axis. */}
                   <mesh position={[-0.1, yM, 0]}>
                     <boxGeometry args={[0.16, 0.02, 0.02]} />
-                    <meshBasicMaterial color="#5a8ab8" transparent opacity={isActive ? 0.5 : 0.15} />
+                    <meshBasicMaterial color="#a3a3a3" transparent opacity={isActive ? 0.6 : 0.2} />
                   </mesh>
                 </group>
               );
@@ -394,6 +404,7 @@ export default function TransformerStack({
 
             <MlpFunnel
               y={yMlp(li)}
+              anchorName={`wt_mlp_${li}`}
               radius={funnelRadius}
               active={isActive && activeKind === "mlp"}
               hovered={isHovered && hoveredKind === "mlp"}
@@ -442,7 +453,6 @@ export default function TransformerStack({
           position={new Vector3().fromArray([
             (() => {
               const Rc = 1.25;
-              const li = Math.floor(hoveredInstance / nh);
               const h = hoveredInstance % nh;
               const g = Math.floor(h / perGroup);
               const withinN = Math.min(perGroup, dims.numHeads - g * perGroup);
@@ -456,7 +466,6 @@ export default function TransformerStack({
             yAttn(Math.floor(hoveredInstance / nh)),
             (() => {
               const Rc = 1.25;
-              const li = Math.floor(hoveredInstance / nh);
               const h = hoveredInstance % nh;
               const g = Math.floor(h / perGroup);
               const withinN = Math.min(perGroup, dims.numHeads - g * perGroup);
@@ -476,15 +485,15 @@ export default function TransformerStack({
 
       {/* GQA label at the active layer's attention station. */}
       {activeLayer != null && activeLayer >= 0 && activeKind === "attn" && (
-        <Billboard position={[3.4, yAttn(activeLayer), 0]}>
-          <Text fontSize={0.36} anchorX="left" color="#9fb4d6" outlineWidth={0.015} outlineColor="#000000">
-            GQA · {dims.numHeads} Q / {dims.kvHeads} KV heads
+        <Billboard position={[3.2, yAttn(activeLayer), 0]}>
+          <Text fontSize={0.24} anchorX="left" color="#7e8ca8" outlineWidth={0.012} outlineColor="#000000">
+            GQA · {dims.numHeads} Q / {dims.kvHeads} KV
           </Text>
         </Billboard>
       )}
 
       {/* Output: converging funnel toward the vocabulary distribution. */}
-      <group position={[0, layerY(nLayers), 0]}>
+      <group name="wt_output" position={[0, layerY(nLayers), 0]}>
         <mesh
           onPointerEnter={handleEnter(nLayers, "output")}
           onPointerLeave={handleLeave}
@@ -501,6 +510,8 @@ export default function TransformerStack({
           />
         </mesh>
       </group>
+
+      <AnnotationsOverlay />
     </group>
   );
 }

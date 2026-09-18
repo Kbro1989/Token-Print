@@ -18,14 +18,6 @@ export default function PredictionTimeline() {
   const [playing, setPlaying] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  if (!data?.logit_lens?.length || !data.tokens) return null;
-
-  const { logit_lens, tokens } = data;
-  const numLayers = logit_lens.length;
-  const numPositions = logit_lens[0].length;
-
-  const clampedPos = Math.min(pos, numPositions - 1);
-
   const play = useCallback(() => {
     setPlaying(true);
   }, []);
@@ -34,16 +26,19 @@ export default function PredictionTimeline() {
     setPlaying(false);
   }, []);
 
+  const { logit_lens, tokens } = data ?? {};
+  const numPositions = logit_lens?.[0]?.length ?? 0;
+
   useEffect(() => {
     if (playing) {
       timerRef.current = setInterval(() => {
         setPos((p) => {
-          const next = p + 1;
-          if (next >= numPositions) {
+          const nextPos = p + 1;
+          if (nextPos >= numPositions) {
             setPlaying(false);
             return 0;
           }
-          return next;
+          return nextPos;
         });
       }, 400);
     }
@@ -52,26 +47,56 @@ export default function PredictionTimeline() {
     };
   }, [playing, numPositions]);
 
+  const [collapsed, setCollapsed] = useState(true);
+
+  if (!logit_lens?.length || !tokens) return null;
+
+  const clampedPos = Math.min(pos, numPositions - 1);
+
+  if (collapsed) {
+    return (
+      <div className="timeline-panel-collapsed">
+        <button
+          className="tl-toggle-btn"
+          onClick={() => setCollapsed(false)}
+          title="Expand Prediction Timeline (layer-by-layer prediction evolution)"
+        >
+          <span>⏱️ Show Prediction Timeline</span>
+          <span className="tl-badge">{numPositions} tokens</span>
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="timeline-panel">
-      <div className="tl-header">
-        <span className="tl-title">Prediction Timeline</span>
-        <span className="tl-subtitle">
-          Layer-by-layer prediction evolution at position{" "}
-          <strong>{clampedPos}</strong> &ldquo;{tokens[clampedPos]?.text ?? "?"}&rdquo;
-        </span>
+      <div className="tl-header-bar">
+        <div className="tl-header">
+          <span className="tl-title">Prediction Timeline</span>
+          <span className="tl-subtitle">
+            Layer-by-layer prediction evolution at position{" "}
+            <strong>{clampedPos}</strong> &ldquo;{tokens[clampedPos]?.text ?? "?"}&rdquo;
+          </span>
+        </div>
+        <button
+          className="tl-close-btn"
+          onClick={() => setCollapsed(true)}
+          title="Minimize Prediction Timeline view to reveal full 3D canvas"
+        >
+          ✕ Hide
+        </button>
       </div>
 
       <div className="tl-nav">
         <button className="tl-btn" onClick={prev} disabled={chapterIdx <= 0}>
-          ‹ Prev
+          Prev
         </button>
         <span className="tl-chapter-idx">Ch. {chapterIdx + 1} / {CHAPTERS.length}</span>
         <button className="tl-btn" onClick={next} disabled={chapterIdx >= CHAPTERS.length - 1}>
-          Next ›
+          Next
         </button>
         <button className="tl-btn" onClick={toggleWtPlay}>
-          {wtPlaying ? "■ Stop" : "▶ Play"}
+          {wtPlaying ? "Stop" : "Play"}
         </button>
         <select
           className="tl-speed"
@@ -111,11 +136,11 @@ export default function PredictionTimeline() {
       <div className="tl-controls">
         {playing ? (
           <button className="tl-btn" onClick={stop}>
-            ■ Stop
+            Stop
           </button>
         ) : (
           <button className="tl-btn" onClick={play}>
-            ▶ Play
+            Play
           </button>
         )}
         <span className="tl-pos-info">pos {clampedPos}</span>

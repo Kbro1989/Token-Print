@@ -1,5 +1,7 @@
 import type { TensorInfo } from "./types";
 import { ROLE_COLORS } from "./tensorName";
+import { mulberry32, POINTCLOUD_SEED } from "./random";
+export { POINTCLOUD_SEED };
 
 // Build a point cloud from a tensor list. Each depth (embeddings, each layer,
 // output head) becomes one uniform vertical PANEL; the panels recede along -Z
@@ -37,11 +39,14 @@ function depthOf(t: TensorInfo, numLayers: number): number {
 
 export function buildPointCloud(
   tensors: TensorInfo[],
-  opts: { budget: number; colorBy: "layer" | "role" },
+  opts: { budget: number; colorBy: "layer" | "role"; seed?: number },
 ): PointCloud {
   const numLayers =
     tensors.reduce((m, t) => Math.max(m, t.layer ?? -1), -1) + 1;
   const maxDepth = numLayers + 1;
+  // Seeded jitter so a given tensor list + budget renders the same layout on
+  // every rebuild/reload (POINTCLOUD_SEED is the fixed default).
+  const rand = mulberry32(opts.seed ?? POINTCLOUD_SEED);
 
   // Group tensor indices by depth.
   const byDepth = new Map<number, number[]>();
@@ -105,11 +110,11 @@ export function buildPointCloud(
       const r = Math.floor(p / cols);
       const fx = cols > 1 ? c / (cols - 1) : 0.5; // 0..1 across width
       const o = ptr * 3;
-      positions[o] = (fx - 0.5) * PW + (Math.random() - 0.5) * (PW / cols) * 0.6;
+      positions[o] = (fx - 0.5) * PW + (rand() - 0.5) * (PW / cols) * 0.6;
       positions[o + 1] =
         (r / Math.max(1, rows - 1) - 0.5) * PH +
-        (Math.random() - 0.5) * (PH / rows) * 0.6;
-      positions[o + 2] = z + (Math.random() - 0.5) * 0.8;
+        (rand() - 0.5) * (PH / rows) * 0.6;
+      positions[o + 2] = z + (rand() - 0.5) * 0.8;
 
       // Which tensor owns this column?
       let ti = bounds[bounds.length - 1].ti;

@@ -1,4 +1,5 @@
 // Headless-browser verification of the Attention District.
+// NOTE: For automated CI visual regression testing, see frontend/tests/visual/ui-baseline.spec.ts (Playwright).
 //
 // Loads the running app in the system Chrome, confirms the HUD status line
 // reflects REAL data from the backend, screenshots layer0/head0, then drives
@@ -100,7 +101,7 @@ async function main() {
 
   const s0 = await statusText(page);
   console.log("status @ load:", s0);
-  await page.screenshot({ path: `${OUT}/neuroscope_layer0_head0.png` });
+  await page.screenshot({ path: `${OUT}/tokenprint_layer0_head0.png` });
 
   const minWeight = 0.05; // store default
   const expA = expectedBeams(analyze.attention, 0, 0, minWeight);
@@ -116,7 +117,7 @@ async function main() {
   const s1 = await statusText(page);
   console.log("status @ switched:", s1);
   await page.screenshot({
-    path: `${OUT}/neuroscope_layer${targetLayer}_head${targetHead}.png`,
+    path: `${OUT}/tokenprint_layer${targetLayer}_head${targetHead}.png`,
   });
 
   const expB = expectedBeams(
@@ -146,18 +147,17 @@ async function main() {
       : "\nFAIL: see above.",
   );
 
-  writeFileSync(
-    `${OUT}/neuroscope_ui_report.txt`,
-    [
-      `backend: ${analyze.model}`,
-      `status@load: ${s0}`,
-      `status@switched: ${s1}`,
-      `expected beams L0/H0: ${expA}`,
-      `expected beams L${targetLayer}/H${targetHead}: ${expB}`,
-      `page errors: ${errors.length}`,
-      `result: ${ok ? "PASS" : "FAIL"}`,
-    ].join("\n"),
-  );
+  const isModelOk = typeof analyze?.model === "string" && analyze.model.length > 0;
+  const reportLines = [
+    `backend: ${isModelOk ? "loaded" : "none"}`,
+    `status@load: ${s0 ? "ok" : "missing"}`,
+    `status@switched: ${s1 ? "ok" : "missing"}`,
+    `expected beams L0/H0: ${expA ? "ok" : "missing"}`,
+    `expected beams L${targetLayer}/H${targetHead}: ${expB ? "ok" : "missing"}`,
+    `page errors: ${errors.length}`,
+    `result: ${ok ? "PASS" : "FAIL"}`,
+  ];
+  writeFileSync(`${OUT}/tokenprint_ui_report.txt`, reportLines.join("\n"), "utf8");
 
   await browser.close();
   process.exit(ok ? 0 : 1);

@@ -22,7 +22,6 @@ export default function KvCacheVolume({
 }) {
   const meta = useStore((s) => s.genMeta);
   const frame = useStore((s) => (s.playIndex >= 0 ? s.genFrames[s.playIndex] : null));
-  const frames = useStore((s) => s.genFrames);
 
   const cacheProfile = useMemo(() => {
     // Build a per-layer snapshot of the KV-cache from the current frame's
@@ -43,15 +42,6 @@ export default function KvCacheVolume({
       newCount: ph.positions,
     };
   }, [frame, meta]);
-
-  const layerMax = useMemo(() => {
-    if (!frames?.length) return 1;
-    let mx = 1;
-    for (const f of frames) {
-      if (f.cache_len && f.cache_len > mx) mx = f.cache_len;
-    }
-    return Math.min(mx, MAX_CACHE);
-  }, [frames]);
 
   if (!cacheProfile) return null;
 
@@ -123,7 +113,6 @@ export default function KvCacheVolume({
                     } else if (isActiveCell) {
                       // Active decode layer: gradient from dim (stale) to bright (new)
                       const age = cacheLen - 1 - c;
-                      const staleness = Math.min(age / Math.max(1, cacheLen - 1), 1);
                       if (isNewCell) {
                         // Freshly decoded token: bright warm
                         color = "#f0c060";
@@ -149,7 +138,22 @@ export default function KvCacheVolume({
                     }
 
                     return (
-                      <mesh key={z} position={[0, 0, zPos]}>
+                      <mesh
+                        key={z}
+                        position={[0, 0, zPos]}
+                        onPointerOver={(e) => {
+                          e.stopPropagation();
+                          useStore.getState().setHoveredTensor(`model.layers.${l}.self_attn.k_proj.cache[pos=${c}]`);
+                        }}
+                        onPointerOut={(e) => {
+                          e.stopPropagation();
+                          useStore.getState().setHoveredTensor(null);
+                        }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          useStore.getState().setSelectedTensor(`model.layers.${l}.self_attn.k_proj.cache[pos=${c}]`);
+                        }}
+                      >
                         <boxGeometry args={[CELL_W, CELL_H, CELL_D]} />
                         <meshStandardMaterial
                           color={color}

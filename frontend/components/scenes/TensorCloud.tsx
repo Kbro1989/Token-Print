@@ -10,7 +10,7 @@ import {
 } from "three";
 
 import { useStore } from "@/lib/store";
-import { buildPointCloud } from "@/lib/pointcloud";
+import { buildPointCloud, POINTCLOUD_SEED } from "@/lib/pointcloud";
 
 /**
  * A soft radial sprite so each point reads as a gentle disc with a bright core
@@ -47,7 +47,10 @@ export default function TensorCloud() {
   const { raycaster, camera } = useThree();
 
   const cloud = useMemo(
-    () => (arch ? buildPointCloud(arch.tensors, { budget, colorBy }) : null),
+    () =>
+      arch
+        ? buildPointCloud(arch.tensors, { budget, colorBy, seed: POINTCLOUD_SEED })
+        : null,
     [arch, budget, colorBy],
   );
 

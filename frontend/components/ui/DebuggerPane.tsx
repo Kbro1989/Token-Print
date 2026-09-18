@@ -1,12 +1,11 @@
 "use client";
 
+import { useEffect } from "react";
 import { useStore } from "@/lib/store";
-import { fmtShape, fmtCount } from "@/lib/format";
 import DebugInspector from "./DebugInspector";
 import HeadInspector from "./HeadInspector";
 import TimingReadout from "./TimingReadout";
 import DistributionPanel from "./DistributionPanel";
-import ConfigDiff from "./ConfigDiff";
 import DataExport from "./DataExport";
 import AblationPanel from "./AblationPanel";
 import BreakpointGutter from "./BreakpointGutter";
@@ -27,6 +26,7 @@ import SamplingPlayground from "./SamplingPlayground";
 import WhyExplainer from "./WhyExplainer";
 import DepthDial from "./DepthDial";
 import Gpt2Loader from "./Gpt2Loader";
+import MoERoutingViz from "./MoERoutingViz";
 
 /**
  * Phase 2: Dedicated debugger mode — a dashboard of all dev tools
@@ -34,15 +34,34 @@ import Gpt2Loader from "./Gpt2Loader";
  */
 export default function DebuggerPane() {
   const arch = useStore((s) => s.arch);
+  const archLoading = useStore((s) => s.archLoading);
+  const archError = useStore((s) => s.archError);
+  const loadArchitecture = useStore((s) => s.loadArchitecture);
   const genMeta = useStore((s) => s.genMeta);
   const opIndex = useStore((s) => s.opIndex);
   const catalog = genMeta?.op_catalog;
+
+  // The debugger needs the live model's architecture (tensor catalog, metadata).
+  // Generation / the HF picker do not populate `arch`, so load it here on entry
+  // and surface a retry whenever it is missing or a prior attempt failed.
+  useEffect(() => {
+    if (!arch && !archLoading) loadArchitecture();
+  }, [arch, archLoading, loadArchitecture]);
 
   if (!arch) {
     return (
       <div className="dbg-empty">
         Load a model first, then enter Debugger mode to inspect every tensor,
         benchmark layer timing, compare configs, or ablate heads.
+        {archError && <div className="dbg-empty-error">{archError}</div>}
+        <button
+          className="chip-btn"
+          style={{ marginTop: 10 }}
+          onClick={() => loadArchitecture()}
+          disabled={archLoading}
+        >
+          {archLoading ? "Loading model…" : "Load live Qwen model"}
+        </button>
       </div>
     );
   }
@@ -58,7 +77,7 @@ export default function DebuggerPane() {
       </div>
 
       <div className="dbg-grid">
-        <div className="dbg-card dbg-card-wide">
+        <div className="dbg-card dbg-card-wide" data-dbg-tool="tensor_inspector">
           <div className="dbg-card-title">Tensor Inspector</div>
           <DebugInspector />
         </div>
@@ -68,7 +87,7 @@ export default function DebuggerPane() {
           <BreakpointGutter />
         </div>
 
-        <div className="dbg-card">
+        <div className="dbg-card" data-dbg-tool="operation_timeline">
           <div className="dbg-card-title">Flame Graph</div>
           <FlameGraph />
         </div>
@@ -78,7 +97,7 @@ export default function DebuggerPane() {
           <LayerTable />
         </div>
 
-        <div className="dbg-card">
+        <div className="dbg-card" data-dbg-tool="attention_analysis">
           <div className="dbg-card-title">Head × Head Grid</div>
           <HeadGrid />
         </div>
@@ -98,7 +117,7 @@ export default function DebuggerPane() {
           <NumberProvenance />
         </div>
 
-        <div className="dbg-card">
+        <div className="dbg-card" data-dbg-tool="trace_frames">
           <div className="dbg-card-title">Replay Branching</div>
           <ReplayBranch />
         </div>
@@ -113,12 +132,12 @@ export default function DebuggerPane() {
           <HeadInspector />
         </div>
 
-        <div className="dbg-card">
+        <div className="dbg-card" data-dbg-tool="kv_cache">
           <div className="dbg-card-title">Layer Timing</div>
           <TimingReadout />
         </div>
 
-        <div className="dbg-card">
+        <div className="dbg-card" data-dbg-tool="activation_analysis">
           <div className="dbg-card-title">Activation Distribution</div>
           <DistributionPanel />
         </div>
@@ -128,7 +147,7 @@ export default function DebuggerPane() {
           <ConsoleRepl />
         </div>
 
-        <div className="dbg-card">
+        <div className="dbg-card" data-dbg-tool="quantization_compare">
           <div className="dbg-card-title">Quant Explainer</div>
           <QuantExplainer />
         </div>
@@ -138,44 +157,49 @@ export default function DebuggerPane() {
           <LoraDeltaViz />
         </div>
 
-        <div className="dbg-card">
+        <div className="dbg-card" data-dbg-tool="induction_heads">
           <div className="dbg-card-title">Induction-Head Lab</div>
           <InductionHeadLab />
         </div>
 
-        <div className="dbg-card">
+        <div className="dbg-card" data-dbg-tool="activation_patching">
           <div className="dbg-card-title">Activation Patching</div>
           <ActivationPatchCompare />
         </div>
 
-        <div className="dbg-card">
+        <div className="dbg-card" data-dbg-tool="residual_contributions">
           <div className="dbg-card-title">Residual Contributions</div>
           <ResidualContributions />
         </div>
 
-        <div className="dbg-card">
+        <div className="dbg-card" data-dbg-tool="sampling_playground">
           <div className="dbg-card-title">Sampling Playground</div>
           <SamplingPlayground />
         </div>
 
-        <div className="dbg-card dbg-card-wide">
+        <div className="dbg-card dbg-card-wide" data-dbg-tool="logit_lens">
           <div className="dbg-card-title">Why This Token?</div>
           <WhyExplainer />
         </div>
 
-        <div className="dbg-card">
+        <div className="dbg-card" data-dbg-tool="token_state">
           <div className="dbg-card-title">Depth Dial</div>
           <DepthDial />
         </div>
 
-        <div className="dbg-card">
+        <div className="dbg-card" data-dbg-tool="local_checkpoint">
           <div className="dbg-card-title">Local Checkpoint</div>
           <Gpt2Loader />
         </div>
 
-        <div className="dbg-card">
+        <div className="dbg-card" data-dbg-tool="head_ablation">
           <div className="dbg-card-title">Ablation</div>
           <AblationPanel />
+        </div>
+
+        <div className="dbg-card dbg-card-wide">
+          <div className="dbg-card-title">MoE Routing</div>
+          <MoERoutingViz />
         </div>
 
         <div className="dbg-card">
