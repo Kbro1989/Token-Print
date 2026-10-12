@@ -11,7 +11,7 @@
     <a href="https://github.com/Sudharsanselvaraj/Token-Print/stargazers"><img src="https://img.shields.io/github/stars/Sudharsanselvaraj/Token-Print?style=flat&color=0a0a0a&label=stars" alt="Stars" /></a>
     <a href="https://github.com/Sudharsanselvaraj/Token-Print/commits/main"><img src="https://img.shields.io/github/last-commit/Sudharsanselvaraj/Token-Print?style=flat&color=0a0a0a&label=last%20commit" alt="Last commit" /></a>
     <img src="https://img.shields.io/badge/data-100%25%20real%20forward%20pass-0a0a0a.svg?style=flat" alt="Real data only" />
-    <a href="GOOD_FIRST_ISSUES.md"><img src="https://img.shields.io/badge/good%20first%20issues-26-orange.svg?style=flat" alt="26 good first issues" /></a>
+    <a href="GOOD_FIRST_ISSUES.md"><img src="https://img.shields.io/badge/good%20first%20issues-1-orange.svg?style=flat" alt="1 good first issue" /></a>
   </p>
 
   <p>
@@ -26,9 +26,9 @@
 ---
 
 <p align="center">
-  <img src=".github/assets/demo.gif" alt="TokenPrint — live demo" width="820" />
+  <a href=".github/assets/demo.mp4"><img src=".github/assets/demo.gif" alt="TokenPrint — architecture inspection, live generation, guided walkthrough, and debugger" width="1000" /></a>
   <br />
-  <sub><a href=".github/assets/demo.mp4">▶ full demo (.mp4)</a></sub>
+  <sub><a href=".github/assets/demo.mp4">▶ Watch the high-quality demo (.mp4)</a></sub>
 </p>
 
 Every other LLM visualizer gives you one of two things: a static architecture diagram, or a
@@ -36,6 +36,12 @@ Every other LLM visualizer gives you one of two things: a static architecture di
 `Qwen2.5-0.5B-Instruct` live or drop in any local `.gguf`, and watch attention heads, RoPE
 rotations, and the residual stream move in real 3D — every value traced back to
 `named_parameters()`, a real forward pass, or the GGUF binary header itself.
+
+## Start locally
+
+Run `python3 scripts/start.py` with Python 3.11/3.12 and Node 20.9+. The launcher installs dependencies, downloads the model with progress, and checks both services. For an immediate offline example, choose **Try a recorded demo** on the home page.
+
+[Setup and troubleshooting](docs/local-setup.md) · [Browser GPT-2 and capabilities](docs/browser-inference.md) · [Reproducible experiments](docs/experiments.md) · [Contributor examples](docs/contributor-examples.md)
 
 ## Why it hits different
 
@@ -95,7 +101,7 @@ falls on that not happening.
 
 ## Contributing
 
-[**26 curated issues**](GOOD_FIRST_ISSUES.md) across 🟢 Easy → 🔬 Research, each with the
+[**Curated beginner tasks**](GOOD_FIRST_ISSUES.md) across 🟢 Easy → 🔬 Research, each with the
 files to touch and how to verify your fix. Read [CONTRIBUTING.md](CONTRIBUTING.md), pick one,
 send a PR. First-timers genuinely welcome.
 
@@ -119,18 +125,11 @@ send a PR. First-timers genuinely welcome.
 
 <!-- CONTRIBUTORS:START -->
 <div align="center">
-<a href="https://github.com/Sudharsanselvaraj"><img src="https://github.com/Sudharsanselvaraj.png?size=96" alt="Sudharsanselvaraj" title="Sudharsanselvaraj" width="48" height="48" align="top" /></a>
-<a href="https://github.com/ManoShruthiS"><img src="https://github.com/ManoShruthiS.png?size=96" alt="ManoShruthiS" title="ManoShruthiS" width="48" height="48" align="top" /></a>
-<a href="https://github.com/Sew-a"><img src="https://github.com/Sew-a.png?size=96" alt="Sew-a" title="Sew-a" width="48" height="48" align="top" /></a>
-<a href="https://github.com/Kesavaraja67"><img src="https://github.com/Kesavaraja67.png?size=96" alt="Kesavaraja67" title="Kesavaraja67" width="48" height="48" align="top" /></a>
-<a href="https://github.com/shanky-ux"><img src="https://github.com/shanky-ux.png?size=96" alt="shanky-ux" title="shanky-ux" width="48" height="48" align="top" /></a>
-<a href="https://github.com/Shivamyadav1312"><img src="https://github.com/Shivamyadav1312.png?size=96" alt="Shivamyadav1312" title="Shivamyadav1312" width="48" height="48" align="top" /></a>
-<a href="https://github.com/Deepashaa24"><img src="https://github.com/Deepashaa24.png?size=96" alt="Deepashaa24" title="Deepashaa24" width="48" height="48" align="top" /></a>
-<a href="https://github.com/jk-pvt"><img src="https://github.com/jk-pvt.png?size=96" alt="jk-pvt" title="jk-pvt" width="48" height="48" align="top" /></a>
-<a href="https://github.com/ris422"><img src="https://github.com/ris422.png?size=96" alt="ris422" title="ris422" width="48" height="48" align="top" /></a>
-<a href="https://github.com/Sarvatha02"><img src="https://github.com/Sarvatha02.png?size=96" alt="Sarvatha02" title="Sarvatha02" width="48" height="48" align="top" /></a>
-<a href="https://github.com/Sriram-Selvaperumal"><img src="https://github.com/Sriram-Selvaperumal.png?size=96" alt="Sriram-Selvaperumal" title="Sriram-Selvaperumal" width="48" height="48" align="top" /></a>
-<a href="https://github.com/challenge456"><img src="https://github.com/challenge456.png?size=96" alt="challenge456" title="challenge456" width="48" height="48" align="top" /></a>
+  <a href="https://github.com/Sudharsanselvaraj/Token-Print/graphs/contributors">
+    <img src="https://contributors-img.firebaseapp.com/image?repo=Sudharsanselvaraj/Token-Print" alt="Token-Print contributors" />
+  </a>
+  <br />
+  <sub>Every person who has contributed to Token-Print. Thank you.</sub>
 </div>
 <!-- CONTRIBUTORS:END -->
 

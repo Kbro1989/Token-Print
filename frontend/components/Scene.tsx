@@ -7,6 +7,7 @@ import * as THREE from "three";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 
 import { useStore } from "@/lib/store";
+import { canvasEvents } from "@/lib/canvasEvents";
 import { SpatialArchitectureScene } from "./scenes/SpatialArchitectureScene";
 import GenerationScene from "./scenes/GenerationScene";
 import WalkthroughScene from "./scenes/WalkthroughScene";
@@ -58,6 +59,7 @@ export default function Scene({
 
   return (
     <Canvas
+      events={canvasEvents}
       dpr={[1, Math.min(typeof window !== "undefined" ? window.devicePixelRatio : 2, 2)]}
       camera={{ position: initPos, fov: 48, near: 0.1, far: 8000 }}
       gl={{
@@ -82,7 +84,7 @@ export default function Scene({
       }}
     >
       <color attach="background" args={["#000000"]} />
-      <fog attach="fog" args={["#000000", 100, 500]} />
+
 
       {/* 3-Point Studio Lighting Rig for Premium Scientific Model */}
       <ambientLight intensity={0.85} />
@@ -91,7 +93,10 @@ export default function Scene({
       <pointLight position={[0, 25, -20]} intensity={1.2} color="#ffffff" distance={150} />
 
       {/* Studio Environment Map for Specular Reflections */}
-      <Environment preset="studio" environmentIntensity={0.6} />
+      {/* Keep async lighting from suspending Canvas while it connects its DOM events. */}
+      <Suspense fallback={null}>
+        <Environment preset="studio" environmentIntensity={0.6} />
+      </Suspense>
 
       {/* Ground Contact Shadows */}
       <ContactShadows position={[0, -360, 0]} opacity={0.4} scale={60} blur={2.5} far={30} />
