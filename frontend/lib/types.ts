@@ -398,3 +398,17 @@ export interface TraceAnnotation {
   text: string;
   position: [number, number, number];
 }
+
+/** POST /analyze/similarity — prompt-level embedding similarity (issue #298). */
+export interface SimilarityResponse {
+  model: string;
+  model_revision?: string | null;
+  mode: string;
+  pooling: "mean";
+  pooling_note: string;
+  similarity: "cosine";
+  embedding_dim: number;
+  sentences: { text: string; num_tokens: number }[];
+  /** matrix[i][j] = cosine(embedding_i, embedding_j), in [-1, 1]. */
+  matrix: number[][];
+}

@@ -4,6 +4,7 @@ import type {
   ArchitectureData,
   DebugSnapshot,
   PatchResponse,
+  SimilarityResponse,
   Trace,
 } from "./types";
 import {
@@ -61,6 +62,33 @@ export async function fetchHealth(): Promise<{
 }
 
 /** POST /analyze/image — real vision-transformer forward pass (issue #87). */
+/**
+ * POST /analyze/similarity — cosine similarity between real mean-pooled
+ * sentence embeddings from the loaded encoder model (issue #298).
+ */
+export async function analyzeSimilarity(
+  sentences: string[],
+): Promise<SimilarityResponse> {
+  const res = await fetch(`${API_URL}/analyze/similarity`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sentences }),
+  });
+  if (!res.ok) {
+    let msg = `Similarity request failed (${res.status})`;
+    try {
+      const body = await res.json();
+      if (body?.detail) {
+        msg = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail);
+      }
+    } catch {
+      /* non-JSON error body; keep the status message */
+    }
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
 export async function analyzeImage(
   image: string,
 ): Promise<AnalyzeResponse> {

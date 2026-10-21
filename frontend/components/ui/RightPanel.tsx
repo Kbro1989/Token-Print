@@ -7,6 +7,8 @@ import GenerationPanel from "./GenerationPanel";
 import { AttentionMatrixWidget } from "./AttentionMatrixWidget";
 import { ResidualStreamWidget } from "./ResidualStreamWidget";
 import { LogitLensWidget } from "./LogitLensWidget";
+import { EmbeddingSimilarityWidget } from "./EmbeddingSimilarityWidget";
+import { useBackendModelMode } from "@/lib/useBackendModelMode";
 import DataProvenanceBadge from "./DataProvenanceBadge";
 import ComponentInspectorPanel from "./ComponentInspectorPanel";
 import WalkthroughInspector from "./WalkthroughInspector";
@@ -33,6 +35,8 @@ export default function RightPanel({ collapsed, onToggleCollapse }: RightPanelPr
   const selectedLayer = useStore((s) => s.selectedLayer);
   const inspectingComponentId = useStore((s) => s.inspectingComponentId);
   const arch3dOpId = useStore((s) => s.arch3dOpId);
+  const modelMode = useStore((s) => s.modelMode);
+  useBackendModelMode();
 
   if (collapsed) {
     return (
@@ -56,10 +60,15 @@ export default function RightPanel({ collapsed, onToggleCollapse }: RightPanelPr
 
   // Explorer: 3D component selection opens the full component inspector.
   const activeComponentId = inspectingComponentId || arch3dOpId;
+  // Prompt-level embedding similarity (issue #298) is a model-level view, not
+  // tied to one component, so it is shown under either explorer inspector.
+  const similarityWidget = modelMode === "encoder" ? <EmbeddingSimilarityWidget /> : null;
+
   if (activeComponentId) {
     return (
       <aside className="rightpanel rp-inspector">
         <ComponentInspectorPanel />
+        {similarityWidget}
       </aside>
     );
   }
@@ -180,6 +189,8 @@ export default function RightPanel({ collapsed, onToggleCollapse }: RightPanelPr
       <div className="rp-section">
         <ResidualStreamWidget />
       </div>
+
+      {similarityWidget}
 
       <div className="rp-section">
         <LogitLensWidget />

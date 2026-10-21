@@ -697,6 +697,55 @@ class ModelEngine:
             },
         }
 
+    def embed_similarity(self, sentences: list[str]) -> dict:
+        """Prompt-level embedding similarity for encoder models (issue #298).
+
+        Each sentence gets its own real forward pass. Its embedding is the mean
+        of the last hidden layer over the tokens the attention mask keeps (the
+        sentence-transformers convention). BERT's ``[CLS]`` pooler is not used:
+        it is trained for next-sentence prediction, not semantic similarity.
+        Returns the pairwise cosine-similarity matrix of those embeddings.
+        """
+        if self.mode != "encoder":
+            raise ValueError(
+                "Prompt-level similarity needs an encoder embedding model "
+                f"(BERT-class); the loaded model is '{self.mode}'."
+            )
+        vectors: list[torch.Tensor] = []
+        token_counts: list[int] = []
+        with self._lock:
+            for sentence in sentences:
+                enc, tokens = self._tokenize(sentence)
+                enc = {k: v.to(self.device) for k, v in enc.items()}
+                with torch.no_grad():
+                    out = self.model(**enc, output_hidden_states=True)
+                last = out.hidden_states[-1][0].float()  # [seq, hidden]
+                mask = enc.get("attention_mask", torch.ones_like(enc["input_ids"]))[0]
+                mask = mask.unsqueeze(-1).to(last.dtype)
+                vectors.append(((last * mask).sum(0) / mask.sum().clamp(min=1)).cpu())
+                token_counts.append(len(tokens))
+
+        emb = torch.stack(vectors)  # [n, hidden]
+        unit = emb / emb.norm(dim=-1, keepdim=True).clamp(min=1e-12)
+        sim = (unit @ unit.T).clamp(-1.0, 1.0)
+
+        return {
+            "model": self.model_id,
+            "model_revision": getattr(self, "revision", None),
+            "mode": self.mode,
+            "pooling": "mean",
+            "pooling_note": (
+                "mean of the last hidden layer over attention-mask tokens, "
+                "one forward pass per sentence"
+            ),
+            "similarity": "cosine",
+            "embedding_dim": int(emb.shape[-1]),
+            "sentences": [
+                {"text": t, "num_tokens": n} for t, n in zip(sentences, token_counts)
+            ],
+            "matrix": [[round(float(v), 4) for v in row] for row in sim.tolist()],
+        }
+
     # ------------------------------------------------------------------ #
     # Vision transformers (issue #87) — patches as tokens
     # ------------------------------------------------------------------ #

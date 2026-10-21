@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # --------------------------------------------------------------------------- #
@@ -39,6 +39,28 @@ class AnalyzeImageRequest(BaseModel):
 class RagChunk(BaseModel):
     id: str = Field(..., description="Caller-provided chunk identifier.")
     text: str = Field(..., description="Retrieved chunk text.", min_length=1)
+
+
+MAX_SIMILARITY_SENTENCES = 8
+
+
+class SimilarityRequest(BaseModel):
+    """Sentences to compare with the loaded encoder model (issue #298)."""
+
+    sentences: list[str] = Field(
+        ...,
+        min_length=2,
+        max_length=MAX_SIMILARITY_SENTENCES,
+        description="2-8 sentences; each gets its own real forward pass.",
+    )
+
+    @field_validator("sentences")
+    @classmethod
+    def _strip_and_require_text(cls, v: list[str]) -> list[str]:
+        cleaned = [s.strip() for s in v]
+        if any(not s for s in cleaned):
+            raise ValueError("Every sentence must contain text.")
+        return cleaned
 
 
 class RagAnalyzeRequest(BaseModel):
@@ -172,6 +194,27 @@ class HFInspectResponse(BaseModel):
     compatibility_level: Literal["High", "Partial", "Basic", "Unsupported"] = "High"
     compatibility_reason: str = ""
     capabilities: dict = Field(default_factory=dict)
+
+
+class SimilaritySentence(BaseModel):
+    text: str
+    num_tokens: int
+
+
+class SimilarityResponse(BaseModel):
+    """Pairwise cosine similarity of real sentence embeddings (issue #298)."""
+
+    model: str
+    model_revision: str | None = None
+    mode: str
+    pooling: Literal["mean"]
+    pooling_note: str
+    similarity: Literal["cosine"]
+    embedding_dim: int
+    sentences: list[SimilaritySentence]
+    matrix: list[list[float]] = Field(
+        ..., description="matrix[i][j] = cosine(embedding_i, embedding_j), in [-1, 1]."
+    )
 
 
 class AnalyzeResponse(BaseModel):

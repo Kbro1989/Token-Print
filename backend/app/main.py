@@ -51,6 +51,8 @@ from .schemas import (
     RagAnalyzeRequest,
     RagAnalyzeResponse,
     RagChunk,
+    SimilarityRequest,
+    SimilarityResponse,
 )
 from .trace import TraceRecorder, parse_trace, serialize_trace
 
@@ -596,6 +598,31 @@ async def analyze_image(req: AnalyzeImageRequest) -> AnalyzeResponse:
 
     data = await anyio.to_thread.run_sync(eng.analyze_image, req.image)
     return AnalyzeResponse(**data)
+
+
+@app.post("/analyze/similarity", response_model=SimilarityResponse)
+async def analyze_similarity(req: SimilarityRequest) -> SimilarityResponse:
+    """Prompt-level embedding similarity for encoder models (issue #298).
+
+    Every number is a cosine similarity between real mean-pooled embeddings
+    from the loaded encoder's forward pass.
+    """
+    eng = _require_engine()
+    if eng.mode != "encoder":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Prompt-level similarity needs an encoder embedding model "
+                f"(BERT-class); the loaded model is '{eng.mode}'."
+            ),
+        )
+    import anyio
+
+    try:
+        data = await anyio.to_thread.run_sync(eng.embed_similarity, req.sentences)
+    except TokenizedTooLong as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return SimilarityResponse(**data)
 
 
 @app.post("/rag/analyze", response_model=RagAnalyzeResponse)

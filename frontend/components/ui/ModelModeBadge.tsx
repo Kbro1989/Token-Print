@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useStore } from "@/lib/store";
+import { useBackendModelMode } from "@/lib/useBackendModelMode";
 
 const SAMPLE = "https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=640";
 
@@ -13,24 +14,7 @@ const SAMPLE = "https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=6
  */
 export default function ModelModeBadge() {
   const modelMode = useStore((s) => s.modelMode);
-  const setModelMode = useStore((s) => s.setModelMode);
-
-  useEffect(() => {
-    let alive = true;
-    const load = async () => {
-      try {
-        const m = await import("@/lib/api");
-        const h = await m.fetchHealth();
-        if (alive && h.mode) setModelMode(h.mode as typeof modelMode);
-      } catch {
-        /* backend unreachable — keep whatever mode we had */
-      }
-    };
-    load();
-    return () => {
-      alive = false;
-    };
-  }, [setModelMode]);
+  useBackendModelMode();
 
   if (!modelMode || modelMode === "causal_lm") return null;
 
