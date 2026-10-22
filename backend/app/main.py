@@ -1023,6 +1023,6 @@ async def replay_trace(req_body: dict) -> dict:
     """
     try:
         trace = parse_trace(req_body)
-    except ValueError as exc:
+    except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return trace

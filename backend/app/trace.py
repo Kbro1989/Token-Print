@@ -72,7 +72,8 @@ def serialize_trace(trace: dict[str, Any]) -> bytes:
 def parse_trace(raw: dict[str, Any]) -> dict[str, Any]:
     """Validate the supported trace version and required trace structure.
 
-    Raises ``ValueError`` for unsupported versions or malformed trace data.
+    Raises ``TypeError`` when the trace has an incorrect shape or field type,
+    and ``ValueError`` when a required field is missing or a value is unsupported.
     Validation is intentionally structural: tensor values and optional frame
     fields remain backend-defined and are preserved without normalization.
     """
@@ -82,8 +83,10 @@ def parse_trace(raw: dict[str, Any]) -> dict[str, Any]:
     version = raw.get("trace_version")
     if version is None:
         raise ValueError("Missing trace_version field")
-    # bool is a subclass of int in Python, but True is not trace version 1.
-    if isinstance(version, bool) or not isinstance(version, int) or version != TRACE_VERSION:
+    # bool is a subclass of int in Python, but True is not a valid version.
+    if isinstance(version, bool) or not isinstance(version, int):
+        raise TypeError("trace_version must be an integer")
+    if version != TRACE_VERSION:
         raise ValueError(
             f"Unsupported trace_version: {version!r}; expected {TRACE_VERSION}"
         )

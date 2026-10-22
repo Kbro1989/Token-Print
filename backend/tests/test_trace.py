@@ -21,7 +21,7 @@ def test_parse_trace_accepts_valid_v1_trace():
     assert parse_trace(trace) is trace
 
 
-@pytest.mark.parametrize("version", [0, 2, 1.0, True, "1", None])
+@pytest.mark.parametrize("version", [0, 2, None])
 def test_parse_trace_rejects_missing_or_unsupported_version(version):
     trace = _valid_trace()
     trace["trace_version"] = version
@@ -29,8 +29,16 @@ def test_parse_trace_rejects_missing_or_unsupported_version(version):
         parse_trace(trace)
 
 
+@pytest.mark.parametrize("version", [1.0, True, "1"])
+def test_parse_trace_rejects_non_integer_version(version):
+    trace = _valid_trace()
+    trace["trace_version"] = version
+    with pytest.raises(TypeError, match="trace_version must be an integer"):
+        parse_trace(trace)
+
+
 def test_parse_trace_rejects_non_object_input():
-    with pytest.raises(ValueError, match="JSON object"):
+    with pytest.raises(TypeError, match="JSON object"):
         parse_trace([])  # type: ignore[arg-type]
 
 
@@ -45,14 +53,14 @@ def test_parse_trace_rejects_non_object_input():
 def test_parse_trace_rejects_malformed_top_level_fields(field, value, message):
     trace = _valid_trace()
     trace[field] = value
-    with pytest.raises(ValueError, match=message):
+    with pytest.raises(TypeError, match=message):
         parse_trace(trace)
 
 
 def test_parse_trace_rejects_non_object_frames():
     trace = _valid_trace()
     trace["frames"] = ["not a frame"]
-    with pytest.raises(ValueError, match="frame 0 must be an object"):
+    with pytest.raises(TypeError, match="frame 0 must be an object"):
         parse_trace(trace)
 
 
@@ -68,3 +76,17 @@ def test_parse_trace_rejects_invalid_done_type():
     trace["done"] = {"type": "token"}
     with pytest.raises(ValueError, match="type 'done'"):
         parse_trace(trace)
+
+
+def test_replay_endpoint_returns_400_for_malformed_nested_field():
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    trace = _valid_trace()
+    trace["meta"] = []
+
+    response = TestClient(app).post("/trace/replay", json=trace)
+
+    assert response.status_code == 400
+    assert "meta" in response.json()["detail"]
