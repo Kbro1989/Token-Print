@@ -129,6 +129,7 @@ class TestEmbedSimilarityEngine:
         out = _engine(model, tokenizer).embed_similarity(SENTENCES[:2])
 
         assert out["model"] == "local/tiny-bert"
+        assert out["mode"] == "encoder"
         assert out["model_revision"] == "test-rev"
         assert out["pooling"] == "mean" and out["similarity"] == "cosine"
         assert out["embedding_dim"] == 32
@@ -217,3 +218,23 @@ class TestSimilarityEndpoint:
             "/analyze/similarity", json={"sentences": ["the cat", " ".join(["cat"] * 200)]}
         )
         assert resp.status_code == 400
+
+
+def test_response_schema_only_allows_encoder_mode():
+    """The endpoint only serves encoder models, and the contract says so."""
+    from pydantic import ValidationError
+
+    from app.schemas import SimilarityResponse
+
+    base = {
+        "model": "m",
+        "pooling": "mean",
+        "pooling_note": "n",
+        "similarity": "cosine",
+        "embedding_dim": 2,
+        "sentences": [{"text": "a", "num_tokens": 1}, {"text": "b", "num_tokens": 1}],
+        "matrix": [[1.0, 0.5], [0.5, 1.0]],
+    }
+    assert SimilarityResponse(mode="encoder", **base).mode == "encoder"
+    with pytest.raises(ValidationError):
+        SimilarityResponse(mode="causal_lm", **base)

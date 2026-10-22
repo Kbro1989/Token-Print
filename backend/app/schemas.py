@@ -206,7 +206,7 @@ class SimilarityResponse(BaseModel):
 
     model: str
     model_revision: str | None = None
-    mode: str
+    mode: Literal["encoder"]
     pooling: Literal["mean"]
     pooling_note: str
     similarity: Literal["cosine"]

@@ -33,12 +33,16 @@ export function EmbeddingSimilarityWidget() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const requestId = useRef(0);
+  // Synchronous in-flight guard: `loading` state only updates on the next
+  // render, so a fast repeated Ctrl/Cmd+Enter could otherwise slip through.
+  const inFlight = useRef(false);
 
   const sentences = parseSentences(text);
   const countError = sentenceCountError(sentences);
 
   async function compare() {
-    if (countError) return;
+    if (countError || inFlight.current) return;
+    inFlight.current = true;
     const id = ++requestId.current;
     setLoading(true);
     setError(null);
@@ -51,6 +55,7 @@ export function EmbeddingSimilarityWidget() {
         setError(e instanceof Error ? e.message : "Similarity request failed");
       }
     } finally {
+      inFlight.current = false;
       if (id === requestId.current) setLoading(false);
     }
   }

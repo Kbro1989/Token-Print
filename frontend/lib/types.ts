@@ -403,7 +403,7 @@ export interface TraceAnnotation {
 export interface SimilarityResponse {
   model: string;
   model_revision?: string | null;
-  mode: string;
+  mode: "encoder";
   pooling: "mean";
   pooling_note: string;
   similarity: "cosine";
