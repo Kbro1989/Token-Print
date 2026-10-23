@@ -1,4 +1,6 @@
 import { expect, test } from "@playwright/test";
+import { analyzeSimilarity } from "../../lib/api";
+import { backoffDelayMs } from "../../lib/backoff";
 import {
   MAX_SIMILARITY_SENTENCES,
   mostSimilarPair,
@@ -55,7 +57,6 @@ test.describe("embedding similarity helpers (issue #298)", () => {
 
 test.describe("review follow-ups (PR #393)", () => {
   test("backoffDelayMs doubles from 1s and caps at 15s", async () => {
-    const { backoffDelayMs } = await import("../../lib/backoff");
     expect([0, 1, 2, 3, 4, 5, 50].map((n) => backoffDelayMs(n))).toEqual([
       1000, 2000, 4000, 8000, 15000, 15000, 15000,
     ]);
@@ -63,7 +64,6 @@ test.describe("review follow-ups (PR #393)", () => {
   });
 
   test("analyzeSimilarity times out when the backend never answers", async () => {
-    const { analyzeSimilarity } = await import("../../lib/api");
     const realFetch = globalThis.fetch;
     let sawSignal = false;
     // A fetch that never resolves on its own, only rejects when aborted.
@@ -83,7 +83,6 @@ test.describe("review follow-ups (PR #393)", () => {
   });
 
   test("analyzeSimilarity surfaces the backend's error detail", async () => {
-    const { analyzeSimilarity } = await import("../../lib/api");
     const realFetch = globalThis.fetch;
     globalThis.fetch = (async () =>
       new Response(JSON.stringify({ detail: "needs an encoder model" }), {
