@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { StateCreator } from "zustand";
 import { validateTrace } from "../traceValidation";
 import { loadTraceFile } from "../api";
 import type { GenerationSource } from "../generation";
@@ -13,14 +14,11 @@ import { createGenerationSlice } from "./generationSlice";
 import { createTraceSlice } from "./traceSlice";
 import type { StoreState } from "./types";
 import { createUISlice } from "./uiSlice";
+import { genResetFields } from "./genReset";
 
 let genHandle: GenerationHandle | null = null;
 
-/**
- * One Zustand store composed from domain slices. Middleware belongs here if it
- * is added in the future, so it observes a single coherent application state.
- */
-export const useStore = create<StoreState>()((set, get, store) => ({
+export const storeDefinition: StateCreator<StoreState, [], [], StoreState> = (set, get, store) => ({
   ...createArchitectureSlice(set, get, store),
   ...createGenerationSlice(set, get, store),
   ...createTraceSlice(set, get, store),
@@ -51,23 +49,8 @@ export const useStore = create<StoreState>()((set, get, store) => ({
   startGeneration: (prompt, options) => {
     genHandle?.close();
     set({
-      genStatus: "streaming",
-      genMeta: null,
-      genDone: null,
-      genFrames: [],
-      genText: "",
-      genError: null,
-      playIndex: -1,
-      isPlaying: false,
-      opIndex: 0,
-      opPlaying: false,
-      autoStarted: false,
-      traceSource: "live",
-      data: null,
-      generationTimestamp: Date.now(),
+      ...genResetFields(),
       ...(options?.source === "local" ? { arch: null, archError: null } : {}),
-      debugSnapshots: {},
-      debugSnapshotError: null,
     });
     const opts: GenOptions = {
       maxNewTokens: 40,
@@ -147,9 +130,17 @@ export const useStore = create<StoreState>()((set, get, store) => ({
   // Classroom controls are UI state but advance the shared generation cursor.
   classroomStep: () => set((state) => {
     const count = state.genMeta?.op_catalog?.length ?? 1;
-    return { opIndex: (state.opIndex + 1) % count };
+    const nextOpIndex = (state.opIndex + 1) % count;
+    if (state.collabEnabled && state.classroomPresenting) {
+      import("../collab/client").then(({ getCollabClient }) => {
+        getCollabClient().sendStep(nextOpIndex);
+      });
+    }
+    return { opIndex: nextOpIndex };
   }),
-}));
+});
+
+export const useStore = create<StoreState>()(storeDefinition);
 
 /** Slice-scoped selectors for common, stable single-domain subscriptions. */
 export const useArchitectureTensors = () => useStore((state) => state.arch?.tensors);
@@ -163,11 +154,21 @@ export const useGenerationStore = <T>(selector: (state: StoreState) => T) => use
 export const useTraceStore = <T>(selector: (state: StoreState) => T) => useStore(selector);
 export const useUiStore = <T>(selector: (state: StoreState) => T) => useStore(selector);
 
+// Expose store globally for runtime inspection & capability debugging
+if (typeof window !== "undefined") {
+  (window as any).__TP_STORE__ = useStore;
+}
+
 /** Parse URL search parameters and restore route-local transient state. */
 export function restoreFromUrl(): Partial<StoreState> {
   if (typeof window === "undefined") return {};
   const params = new URLSearchParams(window.location.search);
   const state: Partial<StoreState> = {};
+  if (params.get("embed") === "true") state.embedMode = true;
+  if (params.get("autoplay") === "true" || params.get("autoplay") === "1") {
+    state.isPlaying = true;
+    state.opPlaying = true;
+  }
   const v = params.get("v");
   if (!v) return state;
   const tokenIndex = params.get("token");
@@ -176,7 +177,6 @@ export function restoreFromUrl(): Partial<StoreState> {
   if (opIndex) state.opIndex = Number(opIndex);
   const chapter = params.get("chapter");
   if (chapter) state.wtChapter = Number(chapter);
-  if (params.get("embed") === "true") state.embedMode = true;
   return state;
 }
 

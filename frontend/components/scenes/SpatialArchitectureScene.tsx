@@ -13,6 +13,7 @@ import { TokenPacketSystem } from "./TokenPacketSystem";
 import { GqaVisualization3D } from "./GqaVisualization3D";
 import { AttentionBeams3D } from "./AttentionBeams3D";
 import { OperationLabel } from "./OperationLabel";
+import { Collab3DBeacon } from "./Collab3DBeacon";
 
 const NUM_LAYERS = 24;
 
@@ -226,6 +227,9 @@ export function SpatialArchitectureScene() {
             enterInspectMode("op_lm_head");
           }}
         />
+
+        {/* 3D halos for peer selections in collaborative multi-viewer mode */}
+        <Collab3DBeacon />
       </group>
     </group>
   );

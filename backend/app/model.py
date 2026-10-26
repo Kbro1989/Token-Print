@@ -12,12 +12,16 @@ Design decisions (see plan):
 from __future__ import annotations
 
 import functools
+import inspect
 import io
+import logging
 import os
 import re
 import threading
 import time
 from typing import ClassVar
+
+logger = logging.getLogger(__name__)
 
 # --- Environment guards (must be set BEFORE torch/transformers import) -------
 # Safety net: if any single op is unimplemented on MPS, fall back to CPU for that
@@ -89,13 +93,50 @@ def _classify_model_type(model_type: str) -> str:
 
 
 def _pick_device() -> str:
-    """Choose the compute device, honoring an explicit override."""
+    """Choose the best available compute device, honoring an explicit override.
+
+    CUDA is preferred when available, followed by Apple MPS and finally CPU.
+    The explicit environment override remains authoritative so users can force
+    a specific device for debugging or compatibility.
+    """
     override = os.environ.get("TOKENPRINT_DEVICE")
     if override:
         return override
+    if torch.cuda.is_available():
+        return "cuda"
     if torch.backends.mps.is_available():
         return "mps"
     return "cpu"
+
+
+def _make_sampling_generator(seed: int | None) -> torch.Generator | None:
+    """Create a request-local CPU RNG for reproducible token sampling.
+
+    Token sampling is performed on CPU (the probability vector is moved there
+    to avoid backend-specific multinomial limitations). A dedicated generator
+    keeps a seeded request reproducible without resetting or mutating PyTorch's
+    process-global random-number generator on every generated token.
+    """
+    if seed is None:
+        return None
+    generator = torch.Generator(device="cpu")
+    generator.manual_seed(int(seed))
+    return generator
+
+
+def _model_accepts_output_attentions(model: torch.nn.Module) -> bool:
+    """Check whether a model's forward method accepts ``output_attentions`` or ``**kwargs``."""
+    try:
+        forward_fn = getattr(model, "forward", None)
+        if forward_fn is None or not callable(forward_fn):
+            return True
+        sig = inspect.signature(forward_fn)
+        params = sig.parameters
+        if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
+            return True
+        return "output_attentions" in params
+    except (ValueError, TypeError):
+        return False
 
 
 class GenerationState:
@@ -678,6 +719,55 @@ class ModelEngine:
             },
         }
 
+    def embed_similarity(self, sentences: list[str]) -> dict:
+        """Prompt-level embedding similarity for encoder models (issue #298).
+
+        Each sentence gets its own real forward pass. Its embedding is the mean
+        of the last hidden layer over the tokens the attention mask keeps (the
+        sentence-transformers convention). BERT's ``[CLS]`` pooler is not used:
+        it is trained for next-sentence prediction, not semantic similarity.
+        Returns the pairwise cosine-similarity matrix of those embeddings.
+        """
+        if self.mode != "encoder":
+            raise ValueError(
+                "Prompt-level similarity needs an encoder embedding model "
+                f"(BERT-class); the loaded model is '{self.mode}'."
+            )
+        vectors: list[torch.Tensor] = []
+        token_counts: list[int] = []
+        with self._lock:
+            for sentence in sentences:
+                enc, tokens = self._tokenize(sentence)
+                enc = {k: v.to(self.device) for k, v in enc.items()}
+                with torch.no_grad():
+                    out = self.model(**enc, output_hidden_states=True)
+                last = out.hidden_states[-1][0].float()  # [seq, hidden]
+                mask = enc.get("attention_mask", torch.ones_like(enc["input_ids"]))[0]
+                mask = mask.unsqueeze(-1).to(last.dtype)
+                vectors.append(((last * mask).sum(0) / mask.sum().clamp(min=1)).cpu())
+                token_counts.append(len(tokens))
+
+        emb = torch.stack(vectors)  # [n, hidden]
+        unit = emb / emb.norm(dim=-1, keepdim=True).clamp(min=1e-12)
+        sim = (unit @ unit.T).clamp(-1.0, 1.0)
+
+        return {
+            "model": self.model_id,
+            "model_revision": getattr(self, "revision", None),
+            "mode": self.mode,
+            "pooling": "mean",
+            "pooling_note": (
+                "mean of the last hidden layer over attention-mask tokens, "
+                "one forward pass per sentence"
+            ),
+            "similarity": "cosine",
+            "embedding_dim": int(emb.shape[-1]),
+            "sentences": [
+                {"text": t, "num_tokens": n} for t, n in zip(sentences, token_counts)
+            ],
+            "matrix": [[round(float(v), 4) for v in row] for row in sim.tolist()],
+        }
+
     # ------------------------------------------------------------------ #
     # Vision transformers (issue #87) — patches as tokens
     # ------------------------------------------------------------------ #
@@ -1099,6 +1189,8 @@ class ModelEngine:
             if needle:
                 prompt = f'[MEMORY] {needle}\n\n[QUERY] {prompt}'
 
+        sampling_generator = _make_sampling_generator(seed)
+
         with self._lock, torch.no_grad():
             # Build the prompt. The chat template makes the instruct model
             # actually respond (coherent generation); raw mode just continues text.
@@ -1159,6 +1251,7 @@ class ModelEngine:
             generated_ids: list[int] = []
             drafts_accepted = 0
             draft_batches = 0
+            drafts_proposed = 0
 
             # -- MoE routing hooks (issue #294, Phase 5.1) ------------------
             # Detect MoE blocks ONCE before the decode loop: _detect_moe_blocks()
@@ -1190,7 +1283,9 @@ class ModelEngine:
                     )
 
             def emit_frame(step, chosen_id, probs, logits, hidden_states,
-                           phase, n_positions, cache_len_in, extra: dict | None = None):
+                           phase, n_positions, cache_len_in,
+                           extra: dict | None = None, attentions=None,
+                           cache_trimmed: bool = False):
                 topk = probs.topk(top_k)
                 top_ids = topk.indices[0].tolist()
                 top_probs = topk.values[0].tolist()
@@ -1198,6 +1293,26 @@ class ModelEngine:
                 layer_stats = [
                     round(float(h[0, -1].abs().mean()), 4) for h in hidden_states
                 ]
+                # Phase 5.8a (#301) -- per-layer attention focus for sonification.
+                # For each transformer layer: mean across heads of each head's peak
+                # attention weight for the current query (last position).
+                # Shape per layer: (batch, num_heads, q_len, kv_len).
+                # During KV-cache decode q_len=1; during prefill we take index [-1].
+                # Result is in [0, 1] because softmax attention weights sum to 1.
+                # Empty list when attentions are unavailable (e.g. GGUF backend).
+                attention_focus: list[float] = []
+                if attentions is not None:
+                    try:
+                        for layer_attn in attentions:
+                            if layer_attn is None or layer_attn.ndim != 4:
+                                continue
+                            # (1, num_heads, q_len, kv_len) -> last query position
+                            a = layer_attn[0, :, -1, :].float()  # (num_heads, kv_len)
+                            head_max = a.max(dim=-1).values      # (num_heads,)
+                            attention_focus.append(round(float(head_max.mean()), 4))
+                    except (RuntimeError, IndexError, ValueError, TypeError) as exc:
+                        logger.debug("Failed to extract per-layer attention focus: %s", exc)
+                        attention_focus = []
                 frame = {
                     "type": "token",
                     "step": step,
@@ -1213,48 +1328,70 @@ class ModelEngine:
                     ],
                     "layer_stats": layer_stats,
                     "layer_timings_ms": self._last_layer_timings_ms(),
+                    "attention_focus": attention_focus,  # Phase 5.8a
                     "eos": chosen_id in eos_ids,
                     "phase": phase,
                     "n_positions": n_positions,
                     "cache_len": cache_len_in,
+                    # Issue #297: True only on frames whose cache was actually
+                    # trimmed this step (sliding-window). The frontend must not
+                    # infer "trimming" from cache_len == window_size alone: a
+                    # cache that is exactly full has NOT been trimmed yet.
+                    "cache_trimmed": cache_trimmed,
                 }
                 if extra:
                     frame.update(extra)
                 return frame
 
+            supports_attentions = _model_accepts_output_attentions(self.model)
             step = 0
             try:
                 while step < max_new_tokens:
                     n_positions = int(cur.shape[1])
                     cache_len_in = state.positions_done
+                    cache_trimmed = False
                     phase = "prefill" if state.past_key_values is None else "decode"
 
                     if decoding_mode == "sliding_window" and state.past_key_values is not None and state.positions_done > window_size:
                         state.trim_cache(window_size)
                         cache_len_in = window_size  # after trim, the model is fed exactly window_size entries
+                        cache_trimmed = True
 
-                    out = self.model(
-                        input_ids=cur,
-                        past_key_values=state.past_key_values,
-                        use_cache=True,
-                        output_hidden_states=True,
-                    )
+                    forward_kwargs = {
+                        "input_ids": cur,
+                        "past_key_values": state.past_key_values,
+                        "use_cache": True,
+                        "output_hidden_states": True,
+                    }
+                    if supports_attentions:
+                        forward_kwargs["output_attentions"] = True
+
+                    out = self.model(**forward_kwargs)
                     state.past_key_values = out.past_key_values
                     state.positions_done += n_positions
 
                     logits = out.logits[:, -1, :]
                     probs = logits.softmax(-1)
 
-                    if decoding_mode == "speculative" and phase == "decode" and draft_gamma > 1 and step + draft_gamma <= max_new_tokens:
+                    # draft_gamma >= 1: a single draft is still a real
+                    # draft/verify round. Requiring > 1 made the UI's minimum
+                    # (1 draft) silently fall back to plain decoding while the
+                    # run still reported decoding_mode == "speculative" with
+                    # zero proposals (issue #297 review).
+                    if decoding_mode == "speculative" and phase == "decode" and draft_gamma >= 1 and step + draft_gamma <= max_new_tokens:
                         # --- Self-speculative pass: draft + verify in one batch. ---
                         draft_batches += 1
+                        drafts_proposed += draft_gamma
                         # The draft distribution is the model's own next-token
                         # distribution sharpened (temperature 0.6) — a cheap,
                         # confident draft. torch.multinomial segfaults on MPS, so
                         # we sample on CPU (one small vocab-vector copy).
                         draft_probs = (logits / 0.6).softmax(-1)[0].float().cpu()
                         draft_ids = torch.multinomial(
-                            draft_probs, draft_gamma, replacement=True
+                            draft_probs,
+                            draft_gamma,
+                            replacement=True,
+                            generator=sampling_generator,
                         )
                         draft_seq = [int(d) for d in draft_ids.tolist()]
                         draft_tokens = torch.tensor([draft_seq], device=self.device)
@@ -1303,6 +1440,11 @@ class ModelEngine:
                         emit_ids = draft_seq[:k] + [cont]
 
                         for g, cid in enumerate(emit_ids):
+                            # k accepted drafts + 1 continuation can push the
+                            # batch past the requested budget; never emit more
+                            # than max_new_tokens tokens in total.
+                            if step >= max_new_tokens:
+                                break
                             if g == 0:
                                 row_probs, row_logits = probs, logits
                                 row_hs = out.hidden_states
@@ -1337,6 +1479,8 @@ class ModelEngine:
                                 step, cid, row_probs, row_logits, row_hs,
                                 phase, n_positions, cache_len_in,
                                 frame_extra,
+                                None,  # Phase 5.8a: attention skipped for speculative batch
+                                cache_trimmed,
                             )
                             step += 1
                             cache_len_in += 1
@@ -1348,9 +1492,6 @@ class ModelEngine:
                         cur = torch.tensor([[chosen_id]], device=self.device)
                         continue
                     else:
-                        if seed is not None:
-                            torch.manual_seed(seed)
-
                         # Greedy decode is argmax regardless of temperature; only the
                         # explicit "sampling" mode draws from the true distribution.
                         if decoding_mode == "greedy" or temperature <= 0.001:
@@ -1377,7 +1518,11 @@ class ModelEngine:
                                 scaled_logits[indices_to_remove] = float('-inf')
 
                             sample_probs = scaled_logits.softmax(-1)[0].float().cpu()
-                            chosen_id = int(torch.multinomial(sample_probs, 1).item())
+                            chosen_id = int(
+                                torch.multinomial(
+                                    sample_probs, 1, generator=sampling_generator
+                                ).item()
+                            )
 
                         generated_ids.append(chosen_id)
                         # Build expert_routing for this decode step if the model is MoE.
@@ -1393,7 +1538,9 @@ class ModelEngine:
                                 _moe_captured, moe_blocks
                             )
                         yield emit_frame(step, chosen_id, probs, logits, out.hidden_states,
-                                         phase, n_positions, cache_len_in, _moe_extra)
+                                         phase, n_positions, cache_len_in, _moe_extra,
+                                         getattr(out, "attentions", None),  # Phase 5.8a
+                                         cache_trimmed)
                         step += 1
                         if chosen_id in eos_ids:
                             break
@@ -1435,9 +1582,11 @@ class ModelEngine:
                 done["decoding_mode"] = decoding_mode
             if decoding_mode == "speculative":
                 done["draft_batches"] = draft_batches
+                done["drafts_proposed"] = drafts_proposed
                 done["drafts_accepted"] = drafts_accepted
+                done["drafts_rejected"] = drafts_proposed - drafts_accepted
                 done["acceptance_rate"] = round(
-                    drafts_accepted / max(draft_batches * draft_gamma, 1), 4
+                    drafts_accepted / max(drafts_proposed, 1), 4
                 )
             if needle_report:
                 done["needle_report"] = needle_report

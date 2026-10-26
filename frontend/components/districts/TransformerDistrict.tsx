@@ -5,6 +5,7 @@ import { Billboard, Text } from "@react-three/drei";
 import { useFrame } from "@react-three/fiber";
 import { Color, Mesh, MeshStandardMaterial } from "three";
 
+import DecodeModeOverlays from "@/components/scenes/DecodeModeOverlays";
 import { useStore } from "@/lib/store";
 
 const STACK_X = -8;
@@ -143,6 +144,10 @@ export default function TransformerDistrict() {
           </group>
         );
       })}
+
+      {/* --- Decode-mode overlays (issue #297): speculative readout, KV window bar,
+             needle recall — shared with GenerationScene. --- */}
+      <DecodeModeOverlays />
 
       {/* --- Generated text / status readout --- */}
       <Billboard position={[0, -3.4, 0]}>

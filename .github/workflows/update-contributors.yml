@@ -1,5 +1,9 @@
 name: "🧑‍🤝‍🧑 Update Contributors"
 
+# Renders the contributor wall from live GitHub data (see
+# scripts/sync-contributors.py). Because the block lists every human
+# contributor, a freshly merged PR changes it, which is what makes this
+# workflow open a refresh PR instead of silently doing nothing.
 on:
   push:
     branches: [main]
@@ -22,37 +26,23 @@ jobs:
           token: ${{ secrets.CONTRIBUTORS_TOKEN }}
           fetch-depth: 0
 
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
       - name: Keep the contributor wall embedded in the README
         id: update
-        uses: actions/github-script@v9
-        with:
-          script: |
-            const fs = require('fs');
-
-            const start = '<!-- CONTRIBUTORS:START -->';
-            const end = '<!-- CONTRIBUTORS:END -->';
-            // The SVG is generated from GitHub's live contributor list, so it
-            // stays current without maintaining a manual avatar roster here.
-            const block = `${start}\n<div align="center">\n` +
-              `  <a href="https://github.com/${context.repo.owner}/${context.repo.repo}/graphs/contributors">\n` +
-              `    <img src="https://contributors-img.firebaseapp.com/image?repo=${context.repo.owner}/${context.repo.repo}" alt="${context.repo.repo} contributors" />\n` +
-              `  </a>\n  <br />\n  <sub>Every person who has contributed to ${context.repo.repo}. Thank you.</sub>\n</div>\n${end}`;
-
-            let readme = fs.readFileSync('README.md', 'utf8');
-            if (!readme.includes(start)) {
-              console.log('Contributors markers not found in README.md; skipping update.');
-              return;
-            }
-
-            const next = readme.replace(new RegExp(`${start}[\\s\\S]*?${end}`), block);
-            if (next === readme) {
-              console.log('README contributor wall unchanged; nothing to commit.');
-              return;
-            }
-
-            fs.writeFileSync('README.md', next);
-            console.log('README.md updated with the contributor wall.');
-            core.setOutput('changed', 'true');
+        env:
+          GH_TOKEN: ${{ secrets.CONTRIBUTORS_TOKEN }}
+        run: |
+          python scripts/sync-contributors.py --repo "$GITHUB_REPOSITORY" --readme README.md
+          if git diff --quiet -- README.md; then
+            echo "README contributor wall unchanged; nothing to commit."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "README.md updated with the contributor wall."
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Open PR with updated contributor wall
         if: steps.update.outputs.changed == 'true'

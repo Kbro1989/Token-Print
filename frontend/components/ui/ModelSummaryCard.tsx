@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useStore, useUIMode } from "@/lib/store";
 import ContributorDrawer from "./ContributorDrawer";
 import { Section, MetricGrid, Metric, IconButton, TOKENS } from "./primitives";
+import { generateHealthReportFromStore } from "@/lib/healthReport";
 
 function ModelAction({
   label,
@@ -119,6 +120,11 @@ export default function ModelSummaryCard({
         >
           <ModelAction label="HF Models" title="Search Hugging Face Hub & inspect model capabilities" onClick={() => useStore.getState().setHfExplorerOpen(true)} />
           <ModelAction label="Contribute" title="Browse open issues & contribute to TokenPrint" onClick={() => setContribOpen(true)} />
+          <ModelAction
+            label="Health Report"
+            title="Export model health summary PDF (capabilities, provenance, timings)"
+            onClick={() => generateHealthReportFromStore(false)}
+          />
           {mode === "explorer" && (
             <ModelAction
               label={tileView ? "3D" : "Grid"}

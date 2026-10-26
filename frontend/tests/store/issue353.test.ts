@@ -86,7 +86,7 @@ function makeStore() {
     hotSpots: [],
     hotSpotsLoading: false,
     computeHotSpots: async () => {},
-    currentDistrict: "root",
+    currentDistrict: "tokenizer",
     setDistrict: () => {},
     selectedLayer: 0,
     selectedHead: 0,

@@ -1,3 +1,16 @@
+@tailwind components;
+@tailwind utilities;
+
+.marshal-showcase-title {
+  font-family: var(--font-sans), 'Inter', system-ui, sans-serif;
+  font-size: clamp(38px, 3.6vw, 46px);
+  font-weight: 300;
+  letter-spacing: -0.02em;
+  color: rgb(255, 255, 255);
+  -webkit-font-smoothing: antialiased;
+  margin: 0px 0px 10px;
+}
+
 :root {
   /* UI Tokens — Strictly Monochrome */
   --ui-bg: #050505;
@@ -1384,6 +1397,33 @@ code {
 .tok.gen {
   color: #e6e6e6;
   background: rgba(255, 255, 255, 0.08);
+}
+
+/* Issue #297 — speculative decoding: accepted draft proposal vs target token.
+   Rendered only on frames the backend tagged with accepted_drafts.
+   .tok.gen.last (the "current token" highlight) is declared LATER with equal
+   specificity, so colour AND background AND the underline need !important to
+   survive when a speculative token is also the newest one — otherwise the last
+   token silently loses its orange/gold origin marker (PR #380 review).
+   Background intentionally blends the two signals. */
+.tok.gen.draft {
+  color: #ff9f43 !important;
+  background: rgba(255, 159, 67, 0.14) !important;
+  box-shadow: inset 0 -1px 0 rgba(255, 159, 67, 0.55) !important;
+}
+
+.tok.gen.target {
+  color: #ffd36e !important;
+  background: rgba(255, 211, 110, 0.16) !important;
+  box-shadow: inset 0 -1px 0 rgba(255, 211, 110, 0.7) !important;
+}
+
+/* Issue #297 — needle-in-haystack probe: prompt tokens that carry the memory
+   fact, so a learner can watch whether the sliding window still feeds them. */
+.tok.prompt.needle {
+  color: #55efc4 !important;
+  background: rgba(85, 239, 196, 0.16);
+  box-shadow: inset 0 -1px 0 rgba(85, 239, 196, 0.75);
 }
 
 .tok.gen.last {

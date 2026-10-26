@@ -4,6 +4,7 @@ import type {
   ArchitectureData,
   DebugSnapshot,
   PatchResponse,
+  SimilarityResponse,
   Trace,
 } from "./types";
 import {
@@ -57,6 +58,54 @@ export async function fetchHealth(): Promise<{
     return res.json();
   } catch {
     return { status: "error", model_loaded: false };
+  }
+}
+
+/** How long a similarity comparison may take before the UI gives up. */
+export const SIMILARITY_TIMEOUT_MS = 60_000;
+
+/**
+ * POST /analyze/similarity — cosine similarity between real mean-pooled
+ * sentence embeddings from the loaded encoder model (issue #298).
+ *
+ * Aborts after `timeoutMs` (covering both the response headers and the body)
+ * so a stalled backend surfaces as an error instead of a request that never
+ * settles.
+ */
+export async function analyzeSimilarity(
+  sentences: string[],
+  timeoutMs: number = SIMILARITY_TIMEOUT_MS,
+): Promise<SimilarityResponse> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${API_URL}/analyze/similarity`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sentences }),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      let msg = `Similarity request failed (${res.status})`;
+      try {
+        const body = await res.json();
+        if (body?.detail) {
+          msg = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail);
+        }
+      } catch (e) {
+        if (controller.signal.aborted) throw e;
+        /* non-JSON error body; keep the status message */
+      }
+      throw new Error(msg);
+    }
+    return (await res.json()) as SimilarityResponse;
+  } catch (e) {
+    if (controller.signal.aborted) {
+      throw new Error(`Similarity request timed out after ${Math.round(timeoutMs / 1000)}s.`);
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
   }
 }
 

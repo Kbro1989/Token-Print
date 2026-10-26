@@ -268,7 +268,9 @@ export interface GenMeta {
 export interface GenDoneStats {
   decoding_mode?: string;
   draft_batches?: number;
+  drafts_proposed?: number;
   drafts_accepted?: number;
+  drafts_rejected?: number;
   acceptance_rate?: number;
   needle_report?: { needle: string; recalled: boolean; response: string };
 }
@@ -279,6 +281,8 @@ export interface GenDone {
   total_steps: number;
   decoding_mode?: string;
   draft_batches?: number;
+  drafts_proposed?: number;
+  drafts_rejected?: number;
   drafts_accepted?: number;
   acceptance_rate?: number;
   needle_report?: { needle: string; recalled: boolean; response: string };
@@ -295,11 +299,21 @@ export interface TokenFrame {
   layer_stats: number[]; // real mean |activation| per layer (len = num_layer_stats)
   // Real per-layer latency in milliseconds (len = num_layers, issue #18).
   layer_timings_ms?: number[];
+  // Phase 5.8a (#301) -- per-layer attention focus for sonification.
+  // Each entry is the mean across heads of each head's maximum softmax attention
+  // weight for the current query position (a scalar in [0, 1]).
+  // len = num_layers during PyTorch generation; [] for GGUF / llama.cpp.
+  // NOT the same as layer_stats (activation norms); this is real attention data.
+  attention_focus?: number[];
   eos: boolean;
   // Real KV-cache accounting (present when the backend uses a cache).
   phase?: "prefill" | "decode";
   n_positions?: number; // tokens actually computed this step
   cache_len?: number; // cached positions reused this step
+  // Issue #297 — true ONLY when the backend actually called trim_cache() on
+  // this frame (sliding-window). A cache that is exactly window_size long has
+  // not been trimmed yet, so the UI must never infer trimming from cache_len.
+  cache_trimmed?: boolean;
   // Issue #85 — set on frames produced by the quantized llama.cpp backend.
   source?: "llama.cpp";
   // True when the token was drawn from the real sampling distribution
@@ -308,6 +322,26 @@ export interface TokenFrame {
   // Issue #294 — MoE routing visualization: present on token frames when
   // generating with a Mixture-of-Experts model.
   expert_routing?: MoERouting;
+  // Issue #297 — Speculative decoding annotations. These mirror EXACTLY the
+  // keys the backend adds at backend/app/model.py:1316-1320 on every frame
+  // produced inside the speculative branch (decode mode "speculative"):
+  //
+  //   accepted_drafts: True   – frame came from the speculative branch
+  //   draft_batch:     True   – batch of draft tokens was proposed this step
+  //   n_accepted:      k      – how many drafts the target model accepted
+  //   draft_pos:       g      – 0-based index of THIS token inside the step's
+  //                             emitted batch (0..k).  g < k  => the token was an
+  //                             accepted draft;  g == k => the target model's
+  //                             own continuation token.
+  //   spec_cont:       g >= k – true only for that continuation token.
+  //
+  // They are booleans/ints, NOT arrays: draft_pos is a single position, not a
+  // list of positions. Optional because greedy/sampling frames omit all of them.
+  accepted_drafts?: boolean;
+  draft_batch?: boolean;
+  n_accepted?: number;
+  draft_pos?: number;
+  spec_cont?: boolean;
 }
 
 export type GenStatus = "idle" | "streaming" | "done" | "error";
@@ -363,4 +397,18 @@ export interface TraceAnnotation {
   layer?: number;
   text: string;
   position: [number, number, number];
+}
+
+/** POST /analyze/similarity — prompt-level embedding similarity (issue #298). */
+export interface SimilarityResponse {
+  model: string;
+  model_revision?: string | null;
+  mode: "encoder";
+  pooling: "mean";
+  pooling_note: string;
+  similarity: "cosine";
+  embedding_dim: number;
+  sentences: { text: string; num_tokens: number }[];
+  /** matrix[i][j] = cosine(embedding_i, embedding_j), in [-1, 1]. */
+  matrix: number[][];
 }

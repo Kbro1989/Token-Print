@@ -10,6 +10,7 @@ import { useStore } from "@/lib/store";
 import { activeLayerOf, phaseInfo } from "@/lib/playback";
 import TransformerStack, { type StackDims } from "./TransformerStack";
 import KvCacheVolume from "./KvCacheVolume";
+import DecodeModeOverlays from "./DecodeModeOverlays";
 import { opColorOf, opKindOf, type OpKind } from "@/lib/sceneColors";
 
 // Tighter slab spacing than the walkthrough keeps the generation workspace's
@@ -428,6 +429,11 @@ export default function GenerationScene() {
           })}
         </group>
       )}
+      {/* --- Decode-mode overlays (issue #297): speculative readout (top right),
+             KV window bar with the needle marker (bottom), needle recall banner
+             (top left). Real frame/meta values only; hidden for runs that do
+             not use those modes. --- */}
+      <DecodeModeOverlays />
     </group>
   );
 }

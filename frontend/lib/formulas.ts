@@ -4,7 +4,7 @@
 // We never show LayerNorm for an RMSNorm model, or learned positions for a RoPE
 // model.
 
-export type ArchFamily = "llama" | "gpt2";
+export type ArchFamily = "llama" | "gpt2" | "gemma";
 
 export type OpKey =
   | "embedding"
@@ -30,16 +30,21 @@ const LLAMA_LIKE = new Set([
   "qwen3moe",
   "mistral",
   "mixtral",
+  "phi3",
+]);
+
+const GEMMA_LIKE = new Set([
   "gemma",
   "gemma2",
   "gemma3",
-  "phi3",
 ]);
 
 export function detectArch(name: string | undefined | null): ArchFamily {
   const a = (name ?? "").toLowerCase();
   if (a.startsWith("gpt2") || a === "gpt" || a === "gptj" || a === "gpt_neox")
     return "gpt2";
+  if (GEMMA_LIKE.has(a) || a.startsWith("gemma") || a.includes("gemma"))
+    return "gemma";
   if (LLAMA_LIKE.has(a)) return "llama";
   // default to the modern llama-family formulas (RMSNorm/RoPE/SwiGLU)
   return "llama";
@@ -157,9 +162,64 @@ const GPT2: Record<OpKey, OpFormula> = {
   },
 };
 
+const GEMMA: Record<OpKey, OpFormula> = {
+  embedding: {
+    title: "Token Embedding (Scaled)",
+    latex: [String.raw`x_0 = E[\,t\,]\cdot \sqrt{d_{\text{model}}}`],
+  },
+  position: {
+    title: "Rotary Position (RoPE)",
+    latex: [
+      String.raw`\tilde{q}_m = R_{\Theta,m}\,q_m,\quad \tilde{k}_n = R_{\Theta,n}\,k_n`,
+    ],
+  },
+  norm: {
+    title: "RMS Normalization (Unit Offset)",
+    latex: [
+      String.raw`\bar{x} = \frac{x}{\sqrt{\tfrac{1}{d}\sum_i x_i^2 + \epsilon}}\odot (1 + \gamma)`,
+    ],
+  },
+  attention: {
+    title: "Multi-Query / Grouped-Query Attention with Soft-Capping",
+    latex: [
+      String.raw`\mathrm{Attn}(Q,K,V)=\mathrm{softmax}\!\left(\mathrm{cap}\cdot\tanh\left(\frac{QK^{\top}}{\sqrt{d_k}\cdot\mathrm{cap}}\right)+M\right)V`,
+    ],
+  },
+  "attn.q": { title: "Query Projection", latex: [String.raw`Q = x\,W_Q`] },
+  "attn.k": { title: "Key Projection", latex: [String.raw`K = x\,W_K`] },
+  "attn.v": { title: "Value Projection", latex: [String.raw`V = x\,W_V`] },
+  "attn.o": {
+    title: "Output Projection",
+    latex: [String.raw`O = \mathrm{Attn}\,W_O,\quad x \mathrel{+}= O`],
+  },
+  mlp: {
+    title: "GeGLU MLP",
+    latex: [
+      String.raw`\mathrm{MLP}(x)=\big(\mathrm{GELU}(x W_{\text{gate}})\odot x W_{\text{up}}\big)W_{\text{down}}`,
+    ],
+  },
+  "mlp.gate": {
+    title: "Gate Projection (GELU)",
+    latex: [String.raw`g = \mathrm{GELU}(x\,W_{\text{gate}})`],
+  },
+  "mlp.up": { title: "Up Projection", latex: [String.raw`u = x\,W_{\text{up}}`] },
+  "mlp.down": {
+    title: "Down Projection",
+    latex: [String.raw`\mathrm{MLP}(x) = (g \odot u)\,W_{\text{down}}`],
+  },
+  output: {
+    title: "Vocabulary Unembedding (Tied Weights)",
+    latex: [
+      String.raw`\ell = \bar{x}_{\text{final}}\,W_U`,
+      String.raw`p = \mathrm{softmax}(\ell)`,
+    ],
+  },
+};
+
 const SETS: Record<ArchFamily, Record<OpKey, OpFormula>> = {
   llama: LLAMA,
   gpt2: GPT2,
+  gemma: GEMMA,
 };
 
 /** Map a tensor role (from tensorName.ts) to a formula op key. */

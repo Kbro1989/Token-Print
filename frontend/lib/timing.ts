@@ -26,20 +26,27 @@ export function layerTimingView(
   fallbackFrame: TokenFrame | null,
   numLayers: number | undefined,
 ): LayerTimingView | null {
-  const timings = frame?.layer_timings_ms;
-  if (timings?.length) {
+  const rawTimings = frame?.layer_timings_ms;
+  const timings = Array.isArray(rawTimings)
+    ? rawTimings.filter((v): v is number => typeof v === "number" && Number.isFinite(v))
+    : undefined;
+  if (timings && timings.length > 0) {
+    const total = timings.reduce((a, b) => a + b, 0);
     return {
       kind: "real",
       perLayer: timings,
-      total: timings.reduce((a, b) => a + b, 0),
+      total: Number.isFinite(total) ? total : null,
       // Bars scale to at least 1 ms so sub-ms layers don't all look "hot".
       max: Math.max(...timings, 1),
     };
   }
 
-  if (!numLayers) return null;
-  const stats = frame?.layer_stats ?? fallbackFrame?.layer_stats;
-  if (!stats?.length) return null;
+  if (typeof numLayers !== "number" || !Number.isFinite(numLayers) || numLayers <= 0) return null;
+  const rawStats = frame?.layer_stats ?? fallbackFrame?.layer_stats;
+  const stats = Array.isArray(rawStats)
+    ? rawStats.filter((v): v is number => typeof v === "number" && Number.isFinite(v))
+    : undefined;
+  if (!stats || stats.length === 0) return null;
   // Live frames build layer_stats from hidden_states: num_layers + 1 entries,
   // entry 0 being the embedding output. Older traces may carry exactly
   // num_layers. Taking the last num_layers keeps one value per layer for both.

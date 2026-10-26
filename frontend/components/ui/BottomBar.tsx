@@ -7,6 +7,9 @@ import { phaseInfo } from "@/lib/playback";
 import { opById } from "@/components/scenes/TransformerOperationGraph";
 import { Button, IconButton, Badge, TOKENS } from "./primitives";
 import { CameraControlGroup } from "./CameraControlGroup";
+import { tokenStyle } from "@/lib/tokenDisplay";
+import { specTokenLabel } from "@/lib/specDecoding";
+import { findNeedleSpan } from "@/lib/genReadouts";
 
 function disp(t: string): string {
   const s = t.replace(/\n/g, "\u23CE");
@@ -156,10 +159,27 @@ function GenBottomBar() {
 
   if (!hasCatalog && frames.length === 0) return null;
 
-  const gen = frames.filter((f) => !f.eos).map((f) => f.chosen.text);
+  const genFrames = frames.filter((f) => !f.eos);
   const TAIL = 8;
   const promptTail = meta?.prompt_tokens.slice(-TAIL) ?? [];
   const truncated = (meta?.prompt_tokens.length ?? 0) > TAIL;
+
+  // Issue #297 — needle probe: mark the [MEMORY] fact's tokens in the HUD.
+  // They sit at the front of the prompt, so when the tail hides them we surface
+  // the needle span first instead of dropping it from the strip.
+  const needleSpan = findNeedleSpan(meta?.prompt_tokens ?? [], meta?.decoding_params?.needle);
+  const tailOffset = (meta?.prompt_tokens.length ?? 0) - promptTail.length;
+  const needleInTail = needleSpan != null && needleSpan.end > tailOffset;
+  const needleHead = needleSpan != null && !needleInTail
+    ? (meta?.prompt_tokens ?? []).slice(needleSpan.start, needleSpan.end)
+    : [];
+  const needleStyle = {
+    color: "#55efc4",
+    background: "rgba(85,239,196,0.16)",
+    boxShadow: "inset 0 -1px 0 rgba(85,239,196,0.75)",
+  } as const;
+  const isNeedle = (globalIndex: number) =>
+    needleSpan != null && globalIndex >= needleSpan.start && globalIndex < needleSpan.end;
 
   return (
     <div
@@ -199,21 +219,38 @@ function GenBottomBar() {
 
       <div style={{ display: "flex", alignItems: "center", gap: "4px", fontSize: "11px", overflow: "hidden" }}>
         <span style={{ color: TOKENS.textMuted, fontSize: "10px" }}>tokens:</span>
-        {truncated && <span style={{ color: TOKENS.textMuted }}>…</span>}
+        {needleHead.length > 0 ? (
+          <>
+            {needleHead.map((t, i) => (
+              <span
+                key={`n${i}`}
+                style={needleStyle}
+                title="needle — the [MEMORY] fact under test"
+              >
+                {disp(t)}
+              </span>
+            ))}
+            <span style={{ color: TOKENS.textMuted }} title="prompt continues">…</span>
+          </>
+        ) : (
+          truncated && <span style={{ color: TOKENS.textMuted }}>…</span>
+        )}
         {promptTail.map((t, i) => (
-          <span key={"p" + i} style={{ color: TOKENS.textMuted }}>
+          <span
+            key={"p" + i}
+            style={isNeedle(tailOffset + i) ? needleStyle : { color: TOKENS.textMuted }}
+            title={isNeedle(tailOffset + i) ? "needle — the [MEMORY] fact under test" : undefined}
+          >
             {disp(t)}
           </span>
         ))}
-        {gen.map((t, i) => (
+        {genFrames.map((f, i) => (
           <span
             key={"g" + i}
-            style={{
-              color: i === gen.length - 1 ? TOKENS.textPrimary : TOKENS.textSecondary,
-              fontWeight: i === gen.length - 1 ? 600 : 400,
-            }}
+            style={tokenStyle(f, i === genFrames.length - 1)}
+            title={specTokenLabel(f) || undefined}
           >
-            {disp(t)}
+            {disp(f.chosen.text)}
           </span>
         ))}
         {status === "streaming" && <span style={{ color: TOKENS.textPrimary }}>▌</span>}

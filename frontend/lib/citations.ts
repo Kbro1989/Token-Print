@@ -125,6 +125,15 @@ export const CITATIONS: Record<string, Citation> = {
     why: "Proves MLP feed-forward layers act as associative key-value memories, where first-layer neurons detect input keys and second-layer vectors store output values.",
     component: "MLP Key-Value Memory",
   },
+  gemma: {
+    id: "gemma",
+    title: "Gemma: Open Models Based on Gemini Research and Technology",
+    authors: "Gemma Team, Google DeepMind: Mesnard, T., Hardin, C., Dadashi, R., Bhupatiraju, S., et al.",
+    year: 2024,
+    url: "https://arxiv.org/abs/2403.08295",
+    why: "Introduced Gemma models featuring scaled embeddings, unit-offset RMSNorm, and GeGLU activations with tied weights for high efficiency.",
+    component: "Gemma Architecture Family",
+  },
 };
 
 /**
@@ -151,6 +160,15 @@ export function getCitationsForModel(
     results.push(CITATIONS.rmsnorm);
     results.push(CITATIONS.rope);
     results.push(CITATIONS.swiglu);
+    results.push(CITATIONS.mlp_kv_memory);
+    if (numKvHeads < numHeads) {
+      results.push(CITATIONS.gqa);
+    }
+  } else if (family === "gemma") {
+    results.push(CITATIONS.gemma);
+    results.push(CITATIONS.rmsnorm);
+    results.push(CITATIONS.rope);
+    results.push(CITATIONS.gelu);
     results.push(CITATIONS.mlp_kv_memory);
     if (numKvHeads < numHeads) {
       results.push(CITATIONS.gqa);
@@ -191,10 +209,10 @@ export function getCitationForOp(
     case "norm1":
     case "norm2":
     case "final_norm":
-      return family === "llama" ? CITATIONS.rmsnorm : CITATIONS.layernorm;
+      return family === "gpt2" ? CITATIONS.layernorm : CITATIONS.rmsnorm;
     case "rope":
     case "position":
-      return family === "llama" ? CITATIONS.rope : CITATIONS.transformer;
+      return family === "gpt2" ? CITATIONS.transformer : CITATIONS.rope;
     case "attn_q":
     case "attn_k":
     case "attn_scores":
@@ -209,7 +227,7 @@ export function getCitationForOp(
     case "swiglu":
       return CITATIONS.mlp_kv_memory;
     case "attention":
-      return numKvHeads < numHeads && family === "llama" ? CITATIONS.gqa : CITATIONS.transformer;
+      return numKvHeads < numHeads && (family === "llama" || family === "gemma") ? CITATIONS.gqa : CITATIONS.transformer;
     default:
       return CITATIONS.transformer;
   }

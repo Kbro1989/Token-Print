@@ -2,6 +2,7 @@
 
 import { useStore } from "@/lib/store";
 import { useCallback } from "react";
+import { generateHealthReportFromStore } from "@/lib/healthReport";
 
 /**
  * Data export card. Exports the analysis payloads AND the tensors captured
@@ -71,6 +72,13 @@ export default function DataExport() {
               onClick={() => downloadJson("logit-lens", data.logit_lens)}
             >
               Logit Lens
+            </button>
+            <button
+              className="dex-btn"
+              onClick={() => generateHealthReportFromStore(true)}
+              title="Export printable PDF health report (capabilities, provenance, timings)"
+            >
+              Health Report (PDF)
             </button>
           </>
         )}

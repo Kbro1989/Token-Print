@@ -14,6 +14,7 @@ import type {
   Trace,
 } from "../types";
 import type { TraceAnnotation } from "../types";
+import type { CollabCursor, CollabPeer, CollabSelection } from "../collab/types";
 
 export interface ArchitectureSlice {
   data: AnalyzeResponse | null;
@@ -184,6 +185,21 @@ export interface UISlice {
   classroomMode: boolean;
   classroomPresenting: boolean;
   toggleClassroomMode: () => void;
+  toggleClassroomPresenting: () => void;
+  // Phase 5.8c (#301) -- Collaborative cursors & presence
+  collabEnabled: boolean;
+  collabConnected: boolean;
+  collabRoomId: string;
+  collabPeers: Record<string, CollabPeer>;
+  collabSelection: CollabSelection | null;
+  toggleCollab: () => void;
+  setCollabEnabled: (b: boolean) => void;
+  setCollabConnected: (b: boolean) => void;
+  setCollabRoomId: (id: string) => void;
+  setCollabPeers: (peers: Record<string, CollabPeer>) => void;
+  updatePeerCursor: (userId: string, cursor: CollabCursor) => void;
+  updatePeerSelection: (userId: string, selection: CollabSelection | null) => void;
+  setCollabSelection: (sel: CollabSelection | null) => void;
 }
 
 export interface Arch3dSlice {

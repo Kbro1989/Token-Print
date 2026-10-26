@@ -141,8 +141,24 @@ export const createArchitectureSlice: StateCreator<StoreState, [], [], Architect
   selectedHead: 0,
   minWeight: 0.05,
   embeddingLayer: 0,
-  setLayer: (selectedLayer) => set({ selectedLayer }),
-  setHead: (selectedHead) => set({ selectedHead }),
+  setLayer: (selectedLayer) => {
+    set({ selectedLayer });
+    const s = get();
+    if (s.collabEnabled) {
+      import("../collab/client").then(({ getCollabClient }) => {
+        getCollabClient().sendSelection({ kind: "layer", index: selectedLayer, name: `Layer ${selectedLayer}` });
+      });
+    }
+  },
+  setHead: (selectedHead) => {
+    set({ selectedHead });
+    const s = get();
+    if (s.collabEnabled) {
+      import("../collab/client").then(({ getCollabClient }) => {
+        getCollabClient().sendSelection({ kind: "head", index: selectedHead, name: `Head ${selectedHead}` });
+      });
+    }
+  },
   setMinWeight: (minWeight) => set({ minWeight }),
   setEmbeddingLayer: (embeddingLayer) => set({ embeddingLayer }),
   analyze: async (sentence) => {

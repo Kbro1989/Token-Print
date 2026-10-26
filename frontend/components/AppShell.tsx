@@ -27,6 +27,7 @@ import TraceGallery from "./ui/TraceGallery";
 import { HFModelPicker } from "./ui/HFModelPicker";
 import { ContextualExplanationOverlay } from "./ui/ContextualExplanationOverlay";
 import { DevDiagnosticsHUD } from "./ui/DevDiagnosticsHUD";
+import { CollabCursorOverlay } from "./collab/CollabCursorOverlay";
 import { fmtShape } from "@/lib/format";
 import { roleLabel } from "@/lib/tensorName";
 import { useKeyboard } from "@/lib/useKeyboard";
@@ -81,6 +82,21 @@ export default function AppShell() {
     if (storeMode !== mode) useStore.getState().setMode(mode);
   }, [mode, storeMode]);
 
+  // Phase 5.8c (#301): Auto-join collab session if present in URL (?collab=true or ?room=xyz)
+  const collabParam = searchParams?.get("collab");
+  const roomParam = searchParams?.get("room");
+  const wtModel = useStore((s) => s.wtModel);
+  const genMetaModel = useStore((s) => s.genMeta?.model);
+  useEffect(() => {
+    if (collabParam === "true" || roomParam) {
+      const activeModelId = ((genMetaModel || wtModel || "main") as string).replace(/[^a-zA-Z0-9_\-\.:]/g, "_");
+      useStore.setState({
+        collabEnabled: true,
+        collabRoomId: roomParam || `model_${activeModelId}`,
+      });
+    }
+  }, [collabParam, roomParam, wtModel, genMetaModel]);
+
   // Responsive sidebar collapse state
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(false);
@@ -95,7 +111,11 @@ export default function AppShell() {
     if (snapshot.playIndex !== undefined) useStore.getState().setPlayIndex(snapshot.playIndex);
     if (snapshot.opIndex !== undefined) useStore.getState().setOpIndex(snapshot.opIndex);
     if (snapshot.wtChapter !== undefined) useStore.getState().setWtChapter(snapshot.wtChapter);
-    if (snapshot.embedMode) useStore.getState().setEmbedMode(snapshot.embedMode);
+    const isEmbed = snapshot.embedMode || searchParams?.get("embed") === "true";
+    if (isEmbed) useStore.getState().setEmbedMode(true);
+    if (searchParams?.get("autoplay") === "true" || searchParams?.get("autoplay") === "1") {
+      useStore.setState({ isPlaying: true, opPlaying: true });
+    }
     // The debugger's child effect may have already started the initial load.
     // Read live state so mount effects and StrictMode do not duplicate requests
     // or silently retry a failure that should remain visible to the user.
@@ -243,6 +263,7 @@ export default function AppShell() {
           onToggleCollapse={() => setRightCollapsed(!rightCollapsed)}
         />
       )}
+      <CollabCursorOverlay />
     </div>
   );
 }
